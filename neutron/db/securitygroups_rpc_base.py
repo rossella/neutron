@@ -22,6 +22,7 @@ from neutron.common import utils
 from neutron.db import models_v2
 from neutron.db import securitygroups_db as sg_db
 from neutron.extensions import securitygroup as ext_sg
+from neutron import manager
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -122,32 +123,68 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
             self.notifier.security_groups_member_updated(
                 context, port.get(ext_sg.SECURITYGROUPS))
 
+    def security_group_info_for_ports(self, context, ports):
+        sg_info = {'devices': ports,
+                   'security_groups': {},
+                   'sg_member_ips': {}}
+        rules_in_db = self._select_rules_for_ports(context, ports)
+        remote_security_group_info = {}
+        for (binding, rule_in_db) in rules_in_db:
+            port_id = binding['port_id']
+            remote_gid = rule_in_db.get('remote_group_id')
+            security_group_id = rule_in_db.get('security_group_id')
+            ethertype = rule_in_db['ethertype']
+            if ('security_group_source_groups'
+                not in sg_info['devices'][port_id]):
+                sg_info['devices'][port_id][
+                    'security_group_source_groups'] = []
 
-class SecurityGroupServerRpcCallbackMixin(object):
-    """A mix-in that enable SecurityGroup agent support in plugin
-    implementations.
-    """
+            if remote_gid:
+                if (remote_gid
+                    not in sg_info['devices'][port_id][
+                        'security_group_source_groups']):
+                    sg_info['devices'][port_id][
+                        'security_group_source_groups'].append(remote_gid)
+                if remote_gid not in remote_security_group_info:
+                    remote_security_group_info[remote_gid] = {}
+                if ethertype not in remote_security_group_info[remote_gid]:
+                    remote_security_group_info[remote_gid][ethertype] = []
 
-    def security_group_rules_for_devices(self, context, **kwargs):
-        """Return security group rules for each port.
+            direction = rule_in_db['direction']
+            rule_dict = {
+                'direction': direction,
+                'ethertype': ethertype}
 
-        also convert remote_group_id rule
-        to source_ip_prefix and dest_ip_prefix rule
+            for key in ('protocol', 'port_range_min', 'port_range_max',
+                        'remote_ip_prefix', 'remote_group_id'):
+                if rule_in_db.get(key):
+                    if key == 'remote_ip_prefix':
+                        direction_ip_prefix = DIRECTION_IP_PREFIX[direction]
+                        rule_dict[direction_ip_prefix] = rule_in_db[key]
+                        continue
+                    rule_dict[key] = rule_in_db[key]
+            if security_group_id not in sg_info['security_groups']:
+                sg_info['security_groups'][security_group_id] = []
+            if rule_dict not in sg_info['security_groups'][security_group_id]:
+                sg_info['security_groups'][security_group_id].append(
+                    rule_dict)
 
-        :params devices: list of devices
-        :returns: port correspond to the devices with security group rules
-        """
-        devices = kwargs.get('devices')
+        sg_info['sg_member_ips'] = remote_security_group_info
+        # the provider rules do not belong to any security group, so these
+        # rules still reside in sg_info['devices'] [port_id]
+        self._apply_provider_rule(context, sg_info['devices'])
 
-        ports = {}
-        for device in devices:
-            port = self.get_port_from_device(device)
-            if not port:
-                continue
-            if port['device_owner'].startswith('network:'):
-                continue
-            ports[port['id']] = port
-        return self._security_group_rules_for_ports(context, ports)
+        return self._get_security_group_member_ips(context, sg_info)
+
+    def _get_security_group_member_ips(self, context, sg_info):
+        ips = self._select_ips_for_remote_group(
+            context, sg_info['sg_member_ips'].keys())
+        for sg_id, member_ips in ips.items():
+            for ip in member_ips:
+                ethertype = 'IPv%d' % netaddr.IPAddress(ip).version
+                if ip not in sg_info['sg_member_ips'][sg_id][ethertype]:
+                    sg_info['sg_member_ips'][sg_id][ethertype].append(ip)
+        return sg_info
 
     def _select_rules_for_ports(self, context, ports):
         if not ports:
@@ -310,3 +347,52 @@ class SecurityGroupServerRpcCallbackMixin(object):
             port['security_group_rules'].append(rule_dict)
         self._apply_provider_rule(context, ports)
         return self._convert_remote_group_id_to_ip_prefix(context, ports)
+
+
+
+class SecurityGroupServerRpcCallbackMixin(object):
+    """A mix-in that enable SecurityGroup agent support in plugin
+    implementations.
+    """
+    @property
+    def plugin(self):
+        return manager.NeutronManager.get_plugin()
+
+    def _get_devices_info(self, devices):
+        devices_info = {}
+        for device in devices:
+            port = self.plugin.get_port_from_device(device)
+            if not port:
+                continue
+            if port['device_owner'].startswith('network:'):
+                continue
+            devices_info[port['id']] = port
+        return devices_info
+
+    def security_group_rules_for_devices(self, context, **kwargs):
+        """Callback method to return security group rules for each port.
+
+        also convert remote_group_id rule
+        to source_ip_prefix and dest_ip_prefix rule
+
+        :params devices: list of devices
+        :returns: port correspond to the devices with security group rules
+        """
+        devices_info = kwargs.get('devices')
+        ports = self._get_devices_info(devices_info)
+        return self._security_group_rules_for_ports(context, ports)
+
+    def security_group_info_for_devices(self, context, **kwargs):
+        """Return security group information for requested devices.
+
+        :params devices: list of devices
+        :returns:
+        sg_info{
+          'security_groups': {sg_id: [rule1, rule2]}
+          'sg_member_ips': {sg_id: {'IPv4': [], 'IPv6': []}}
+          'devices': {device_id: {device_info}}
+        }
+        """
+        devices_info = kwargs.get('devices')
+        ports = self._get_devices_info(devices_info)
+        return self.plugin.security_group_info_for_ports(context, ports)

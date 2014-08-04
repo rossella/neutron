@@ -41,10 +41,11 @@ class RpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
                    sg_db_rpc.SecurityGroupServerRpcCallbackMixin,
                    type_tunnel.TunnelRpcCallbackMixin):
 
-    RPC_API_VERSION = '1.1'
+    RPC_API_VERSION = '1.2'
     # history
     #   1.0 Initial version (from openvswitch/linuxbridge)
     #   1.1 Support Security Group RPC
+    #   1.2 Support SecurityGroupServerRpcCallbackMixin
 
     def __init__(self, notifier, type_manager):
         # REVISIT(kmestery): This depends on the first three super classes
