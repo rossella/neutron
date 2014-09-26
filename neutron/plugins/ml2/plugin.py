@@ -45,6 +45,7 @@ from neutron.openstack.common import jsonutils
 from neutron.openstack.common import lockutils
 from neutron.openstack.common import log
 from neutron.openstack.common import rpc as c_rpc
+from neutron.openstack.common import uuidutils
 from neutron.plugins.common import constants as service_constants
 from neutron.plugins.ml2.common import exceptions as ml2_exc
 from neutron.plugins.ml2 import config  # noqa
@@ -788,3 +789,28 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
     def port_bound_to_host(self, port_id, host):
         port_host = db.get_port_binding_host(port_id)
         return (port_host == host)
+
+    def get_ports_from_devices(self, devices):
+        port_ids_to_devices = dict((self._device_to_port_id(device), device)
+                                   for device in devices)
+        port_ids = port_ids_to_devices.keys()
+        ports = db.get_ports_and_sgs(port_ids)
+        for port in ports:
+            # map back to original requested id
+            port_id = next((port_id for port_id in port_ids
+                           if port['id'].startswith(port_id)), None)
+            port['device'] = port_ids_to_devices.get(port_id)
+
+        return ports
+
+    def _device_to_port_id(self, device):
+        # REVISIT(rkukura): Consider calling into MechanismDrivers to
+        # process device names, or having MechanismDrivers supply list
+        # of device prefixes to strip.
+        # REVISIT(irenab): Consider calling into bound MD to
+        # handle the get_device_details RPC, then remove the 'else' clause
+        if not uuidutils.is_uuid_like(device):
+            port = db.get_port_from_device_mac(device)
+            if port:
+                return port.id
+        return device
