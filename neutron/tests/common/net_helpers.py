@@ -87,6 +87,33 @@ class NamespaceFixture(fixtures.Fixture):
             self.ip_wrapper.netns.delete(self.name)
 
 
+class TapFixture(fixtures.Fixture):
+    """Create a tap.
+
+    :ivar ports: created veth ports
+    :type ports: IPDevice 2-uplet
+    """
+
+    def setUp(self):
+        super(TapFixture, self).setUp()
+        ip_wrapper = ip_lib.IPWrapper()
+
+        def _create_tap(name):
+            return ip_wrapper.add_tuntap(name)
+
+        self.tap = common_base.create_resource("tap", _create_tap)
+        self.addCleanup(self.destroy)
+
+    def destroy(self):
+        ip_wrapper = ip_lib.IPWrapper()
+        try:
+            ip_wrapper.del_veth(self.tap.name)
+        except RuntimeError:
+            # NOTE(cbrandily): It seems a veth is automagically deleted
+            # when a namespace owning a veth endpoint is deleted.
+            pass
+
+
 class VethFixture(fixtures.Fixture):
     """Create a veth.
 
@@ -157,6 +184,10 @@ class OVSBridgeFixture(fixtures.Fixture):
 
 class OVSPortFixture(PortFixture):
 
+    def __init__(self, bridge=None, namespace=None, port_attrs=None):
+        super(OVSPortFixture, self).__init__(bridge, namespace)
+        self.port_attributes = port_attrs
+
     def _create_bridge_fixture(self):
         return OVSBridgeFixture()
 
@@ -172,7 +203,7 @@ class OVSPortFixture(PortFixture):
         self.port.link.set_up()
 
     def create_port(self, name):
-        self.bridge.add_port(name, ('type', 'internal'))
+        self.bridge.add_port(name, ('type', 'internal'), self.port_attributes)
         return name
 
 

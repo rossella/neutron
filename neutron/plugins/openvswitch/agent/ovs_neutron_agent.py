@@ -1223,6 +1223,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     def treat_devices_added_or_updated(self, devices, ovs_restarted):
         skipped_devices = []
         try:
+            import pdb; pdb.set_trace()  # XXX BREAKPOINT
             devices_details_list = self.plugin_rpc.get_devices_details_list(
                 self.context,
                 devices,
@@ -1283,6 +1284,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 devices,
                 self.agent_id,
                 cfg.CONF.host)
+            import pdb; pdb.set_trace()  # XXX BREAKPOINT
         except Exception as e:
             raise DeviceListRetrievalError(devices=devices, error=e)
 
