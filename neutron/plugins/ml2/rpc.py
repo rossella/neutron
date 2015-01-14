@@ -27,7 +27,7 @@ from neutron.common import exceptions
 from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron.extensions import portbindings
-from neutron.i18n import _LW
+from neutron.i18n import _LE, _LW
 from neutron import manager
 from neutron.plugins.ml2 import driver_api as api
 from neutron.plugins.ml2.drivers import type_tunnel
@@ -47,7 +47,8 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
     #       return value to include fixed_ips and device_owner for
     #       the device port
     #   1.4 tunnel_sync rpc signature upgrade to obtain 'host'
-    target = oslo_messaging.Target(version='1.4')
+    #   1.5 Support update_device_list_up and update_device_list_down
+    target = oslo_messaging.Target(version='1.5')
 
     def __init__(self, notifier, type_manager):
         self.setup_tunnel_callback_mixin(notifier, type_manager)
@@ -161,6 +162,22 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
         return {'device': device,
                 'exists': port_exists}
 
+    def update_device_list_down(self, rpc_context, **kwargs):
+        devices = []
+        failed_devices = []
+        for device in kwargs.pop('devices', []):
+            try:
+                devices.append(self.update_device_down(
+                               rpc_context,
+                               device=device,
+                               **kwargs))
+            except Exception:
+                failed_devices.append(device)
+                LOG.error(_LE("Failed to update device %s down") % device)
+
+        return {'devices': devices,
+                'failed_devices': failed_devices}
+
     def update_device_up(self, rpc_context, **kwargs):
         """Device is up on agent."""
         agent_id = kwargs.get('agent_id')
@@ -195,6 +212,23 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
             }
             registry.notify(
                 resources.PORT, events.AFTER_UPDATE, plugin, **kwargs)
+
+    def update_device_list_up(self, rpc_context, **kwargs):
+        devices = []
+        failed_devices = []
+        for device in kwargs.pop('devices', []):
+            try:
+                self.update_device_up(
+                    rpc_context,
+                    device=device,
+                    **kwargs)
+                devices.append(device)
+            except Exception:
+                failed_devices.append(device)
+                LOG.error(_LE("Failed to update device %s up") % device)
+
+        return {'devices': devices,
+                'failed_devices': failed_devices}
 
 
 class AgentNotifierApi(dvr_rpc.DVRAgentRpcApiMixin,

@@ -477,8 +477,9 @@ class TestOvsDvrNeutronAgent(base.BaseTestCase):
 
         with contextlib.nested(
             mock.patch.object(self.agent, 'reclaim_local_vlan'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down',
-                              return_value=None),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_down',
+                              return_value={'devices': [],
+                                            'failed_devices': []}),
             mock.patch.object(self.agent.dvr_agent.int_br, 'delete_flows'),
             mock.patch.object(self.agent.dvr_agent.tun_br,
                               'delete_flows')) as (reclaim_vlan_fn,
@@ -564,8 +565,10 @@ class TestOvsDvrNeutronAgent(base.BaseTestCase):
 
         with contextlib.nested(
             mock.patch.object(self.agent, 'reclaim_local_vlan'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down',
-                              return_value=None),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_down',
+                              return_value={
+                                  'devices': [self._compute_port.vif_id],
+                                  'failed_devices': []}),
             mock.patch.object(self.agent.dvr_agent.int_br,
                               'delete_flows')) as (reclaim_vlan_fn,
                                                    update_dev_down_fn,
@@ -635,8 +638,9 @@ class TestOvsDvrNeutronAgent(base.BaseTestCase):
 
         with contextlib.nested(
             mock.patch.object(self.agent, 'reclaim_local_vlan'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down',
-                              return_value=None),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_down',
+                              return_value={'devices': [],
+                                            'failed_devices': []}),
             mock.patch.object(self.agent.dvr_agent.int_br,
                               'delete_flows')) as (reclaim_vlan_fn,
                                                    update_dev_down_fn,

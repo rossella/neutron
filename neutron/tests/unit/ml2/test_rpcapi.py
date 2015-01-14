@@ -171,6 +171,71 @@ class RpcCallbacksTestCase(base.BaseTestCase):
                          self.callbacks.update_device_down(
                              'fake_context', device='fake_device'))
 
+    def _test_update_device_list(self, callback, mock_name,
+                                 side_effect, expected):
+        devices = [1, 2, 3]
+        kwargs = {'host': 'fake_host', 'agent_id': 'fake_agent_id'}
+        with mock.patch.object(self.callbacks, mock_name,
+                               side_effect=side_effect) as f:
+            res = callback('fake_context', devices=devices, **kwargs)
+            self.assertEqual(expected, res)
+            self.assertEqual(len(devices), f.call_count)
+            calls = [mock.call('fake_context', device=i, **kwargs)
+                     for i in devices]
+            f.assert_has_calls(calls)
+
+    def _test_update_device_list_down(self, side_effect, expected):
+        mock_name = 'update_device_down'
+        callback = self.callbacks.update_device_list_down
+        self._test_update_device_list(callback, mock_name, side_effect,
+                                      expected)
+
+    def test_update_device_list_down(self):
+        mock_name = 'update_device_down'
+        callback = self.callbacks.update_device_list_down
+        side_effect_devices = [
+            {'device': 1, 'exists': True},
+            {'device': 2, 'exists': True},
+            {'device': 3, 'exists': True}]
+        expected = {'devices': [{'device': 1, 'exists': True},
+                                {'device': 2, 'exists': True},
+                                {'device': 3, 'exists': True}],
+                    'failed_devices': []}
+        self._test_update_device_list(callback, mock_name, side_effect_devices,
+                                      expected)
+
+    def test_update_device_list_down_failed_devices(self):
+        mock_name = 'update_device_down'
+        callback = self.callbacks.update_device_list_down
+        side_effect_devices = [
+            {'device': 1, 'exists': True},
+            Exception('testdevice'),
+            {'device': 3, 'exists': True}]
+        expected = {'devices': [{'device': 1, 'exists': True},
+                                {'device': 3, 'exists': True}],
+                    'failed_devices': [2]}
+        self._test_update_device_list(callback, mock_name, side_effect_devices,
+                                      expected)
+
+    def test_update_device_list_up(self):
+        mock_name = 'update_device_up'
+        callback = self.callbacks.update_device_list_up
+        side_effect_devices = None
+        expected = {'devices': [1, 2, 3], 'failed_devices': []}
+        self._test_update_device_list(callback, mock_name, side_effect_devices,
+                                      expected)
+
+    def test_update_device_list_up_failed_devices(self):
+        mock_name = 'update_device_up'
+        callback = self.callbacks.update_device_list_up
+        side_effect_devices = [
+            None,
+            Exception('testdevice'),
+            None]
+        expected = {'devices': [1, 3], 'failed_devices': [2]}
+        self._test_update_device_list(callback, mock_name, side_effect_devices,
+                                      expected)
+
 
 class RpcApiTestCase(base.BaseTestCase):
 
@@ -281,6 +346,15 @@ class RpcApiTestCase(base.BaseTestCase):
                            agent_id='fake_agent_id',
                            host='fake_host')
 
+    def test_update_device_list_down(self):
+        rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
+        self._test_rpc_api(rpcapi, None,
+                           'update_device_list_down', rpc_method='call',
+                           devices=['fake_device1', 'fake_device2'],
+                           agent_id='fake_agent_id',
+                           host='fake_host',
+                           version='1.5')
+
     def test_tunnel_sync(self):
         rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
         self._test_rpc_api(rpcapi, None,
@@ -297,3 +371,12 @@ class RpcApiTestCase(base.BaseTestCase):
                            device='fake_device',
                            agent_id='fake_agent_id',
                            host='fake_host')
+
+    def test_update_device_list_up(self):
+        rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
+        self._test_rpc_api(rpcapi, None,
+                           'update_device_list_up', rpc_method='call',
+                           devices=['fake_device1', 'fake_device2'],
+                           agent_id='fake_agent_id',
+                           host='fake_host',
+                           version='1.5')
