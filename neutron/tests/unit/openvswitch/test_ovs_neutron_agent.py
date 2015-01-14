@@ -284,17 +284,6 @@ class TestOvsNeutronAgent(base.BaseTestCase):
                 vif_port_set, registered_ports, port_tags_dict=port_tags_dict)
         self.assertEqual(expected, actual)
 
-    def test_treat_devices_added_returns_raises_for_missing_device(self):
-        with contextlib.nested(
-            mock.patch.object(self.agent.plugin_rpc,
-                              'get_devices_details_list',
-                              side_effect=Exception()),
-            mock.patch.object(self.agent.int_br, 'get_vif_port_by_id',
-                              return_value=mock.Mock())):
-            self.assertRaises(
-                ovs_neutron_agent.DeviceListRetrievalError,
-                self.agent.treat_devices_added_or_updated, [{}], False)
-
     def _mock_treat_devices_added_updated(self, details, port, func_name):
         """Mock treat devices added or updated.
 
@@ -305,12 +294,17 @@ class TestOvsNeutronAgent(base.BaseTestCase):
         """
         with contextlib.nested(
             mock.patch.object(self.agent.plugin_rpc,
-                              'get_devices_details_list',
-                              return_value=[details]),
+                              'get_devices_details_list_and_failed_devices',
+                              return_value={'devices': [details],
+                                            'failed_devices': None}),
             mock.patch.object(self.agent.int_br, 'get_vif_port_by_id',
                               return_value=port),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_up'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down'),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_up',
+                              return_value={'devices': [],
+                                            'failed_devices': []}),
+            mock.patch.object(
+                self.agent.plugin_rpc, 'update_device_list_down',
+                return_value={'devices': details, 'failed_devices': []}),
             mock.patch.object(self.agent, func_name)
         ) as (get_dev_fn, get_vif_func, upd_dev_up, upd_dev_down, func):
             skip_devs = self.agent.treat_devices_added_or_updated([{}], False)
@@ -332,7 +326,9 @@ class TestOvsNeutronAgent(base.BaseTestCase):
 
     def test_treat_devices_added_does_not_process_missing_port(self):
         with contextlib.nested(
-            mock.patch.object(self.agent.plugin_rpc, 'get_device_details'),
+            mock.patch.object(
+                self.agent.plugin_rpc,
+                'get_devices_details_list_and_failed_devices'),
             mock.patch.object(self.agent.int_br, 'get_vif_port_by_id',
                               return_value=None)
         ) as (get_dev_fn, get_vif_func):
@@ -349,12 +345,17 @@ class TestOvsNeutronAgent(base.BaseTestCase):
         dev_mock.__getitem__.return_value = 'the_skipped_one'
         with contextlib.nested(
             mock.patch.object(self.agent.plugin_rpc,
-                              'get_devices_details_list',
-                              return_value=[dev_mock]),
+                              'get_devices_details_list_and_failed_devices',
+                              return_value={'devices': [dev_mock],
+                                            'failed_devices': None}),
             mock.patch.object(self.agent.int_br, 'get_vif_port_by_id',
                               return_value=None),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_up'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down'),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_up',
+                              return_value={'devices': [dev_mock],
+                                            'failed_devices': []}),
+            mock.patch.object(
+                self.agent.plugin_rpc, 'update_device_list_down',
+                return_value={'devices': [dev_mock], 'failed_devices': []}),
             mock.patch.object(self.agent, 'treat_vif_port')
         ) as (get_dev_fn, get_vif_func, upd_dev_up,
               upd_dev_down, treat_vif_port):
@@ -381,12 +382,18 @@ class TestOvsNeutronAgent(base.BaseTestCase):
 
         with contextlib.nested(
             mock.patch.object(self.agent.plugin_rpc,
-                              'get_devices_details_list',
-                              return_value=[fake_details_dict]),
+                              'get_devices_details_list_and_failed_devices',
+                              return_value={'devices': [fake_details_dict],
+                                            'failed_devices': None}),
             mock.patch.object(self.agent.int_br, 'get_vif_port_by_id',
                               return_value=mock.MagicMock()),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_up'),
-            mock.patch.object(self.agent.plugin_rpc, 'update_device_down'),
+            mock.patch.object(self.agent.plugin_rpc, 'update_device_list_up',
+                              return_value={'devices': [fake_details_dict],
+                                            'failed_devices': []}),
+            mock.patch.object(
+                self.agent.plugin_rpc, 'update_device_list_down',
+                return_value={'devices': [fake_details_dict],
+                              'failed_devices': []}),
             mock.patch.object(self.agent, 'treat_vif_port')
         ) as (get_dev_fn, get_vif_func, upd_dev_up,
               upd_dev_down, treat_vif_port):
@@ -396,15 +403,12 @@ class TestOvsNeutronAgent(base.BaseTestCase):
             self.assertTrue(treat_vif_port.called)
             self.assertTrue(upd_dev_down.called)
 
-    def test_treat_devices_removed_returns_true_for_missing_device(self):
-        with mock.patch.object(self.agent.plugin_rpc, 'update_device_down',
-                               side_effect=Exception()):
-            self.assertTrue(self.agent.treat_devices_removed([{}]))
-
     def _mock_treat_devices_removed(self, port_exists):
         details = dict(exists=port_exists)
-        with mock.patch.object(self.agent.plugin_rpc, 'update_device_down',
-                               return_value=details):
+        with mock.patch.object(self.agent.plugin_rpc,
+                               'update_device_list_down',
+                               return_value={'devices': details,
+                                             'failed_devices': []}):
             with mock.patch.object(self.agent, 'port_unbound') as port_unbound:
                 self.assertFalse(self.agent.treat_devices_removed([{}]))
         self.assertTrue(port_unbound.called)

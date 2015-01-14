@@ -113,26 +113,52 @@ class RpcCallbacksTestCase(base.BaseTestCase):
                                           cached_networks=cached_networks)
         self.assertTrue('fake_port' in cached_networks)
 
-    def test_get_devices_details_list(self):
+    def _test_get_devices_list(self, callback, side_effect, expected):
         devices = [1, 2, 3, 4, 5]
         kwargs = {'host': 'fake_host', 'agent_id': 'fake_agent_id'}
         with mock.patch.object(self.callbacks, 'get_device_details',
-                               side_effect=devices) as f:
-            res = self.callbacks.get_devices_details_list('fake_context',
-                                                          devices=devices,
-                                                          **kwargs)
-            self.assertEqual(devices, res)
+                               side_effect=side_effect) as f:
+            res = callback('fake_context', devices=devices, **kwargs)
+            self.assertEqual(expected, res)
             self.assertEqual(len(devices), f.call_count)
             calls = [mock.call('fake_context', device=i,
                                cached_networks={}, **kwargs)
                      for i in devices]
             f.assert_has_calls(calls)
 
+    def test_get_devices_details_list(self):
+        devices = [1, 2, 3, 4, 5]
+        expected = devices
+        callback = self.callbacks.get_devices_details_list
+        self._test_get_devices_list(callback, devices, expected)
+
     def test_get_devices_details_list_with_empty_devices(self):
         with mock.patch.object(self.callbacks, 'get_device_details') as f:
             res = self.callbacks.get_devices_details_list('fake_context')
             self.assertFalse(f.called)
             self.assertEqual([], res)
+
+    def test_get_devices_details_list_and_failed_devices(self):
+        devices = [1, 2, 3, 4, 5]
+        expected = {'devices': devices, 'failed_devices': []}
+        callback = (
+            self.callbacks.get_devices_details_list_and_failed_devices)
+        self._test_get_devices_list(callback, devices, expected)
+
+    def test_get_devices_details_list_and_failed_devices_failures(self):
+        devices = [1, Exception('testdevice'), 3,
+                   Exception('testdevice'), 5]
+        expected = {'devices': [1, 3, 5], 'failed_devices': [2, 4]}
+        callback = (
+            self.callbacks.get_devices_details_list_and_failed_devices)
+        self._test_get_devices_list(callback, devices, expected)
+
+    def test_get_devices_details_list_and_failed_devices_empty_dev(self):
+        with mock.patch.object(self.callbacks, 'get_device_details') as f:
+            res = self.callbacks.get_devices_details_list_and_failed_devices(
+                'fake_context')
+            self.assertFalse(f.called)
+            self.assertEqual({'devices': [], 'failed_devices': []}, res)
 
     def _test_update_device_not_bound_to_host(self, func):
         self.plugin.port_bound_to_host.return_value = False
@@ -170,6 +196,66 @@ class RpcCallbacksTestCase(base.BaseTestCase):
         self.assertEqual({'device': 'fake_device', 'exists': False},
                          self.callbacks.update_device_down(
                              'fake_context', device='fake_device'))
+
+    def _test_update_device_list(self, devices_up_side_effect,
+                                 devices_down_side_effect, expected):
+        devices_up = [1, 2, 3]
+        devices_down = [4, 5]
+        kwargs = {'host': 'fake_host', 'agent_id': 'fake_agent_id'}
+        with contextlib.nested(
+            mock.patch.object(self.callbacks, 'update_device_up',
+                              side_effect=devices_up_side_effect),
+            mock.patch.object(self.callbacks, 'update_device_down',
+                              side_effect=devices_down_side_effect)
+        ) as (f_up,f_down):
+            res = self.callbacks.update_device_list(
+                'fake_context', devices_up=devices_up,
+                devices_down=devices_down, **kwargs)
+            self.assertEqual(expected, res)
+            self.assertEqual(len(devices_up), f_up.call_count)
+            self.assertEqual(len(devices_down), f_down.call_count)
+
+    def test_update_device_list_no_failure(self):
+        devices_up_side_effect = [1, 2, 3]
+        devices_down_side_effect = [
+            {{'device': 4, 'exists': True},
+            {'device': 5, 'exists': True}}]
+        expected = {'devices_up': devices_up_side_effect,
+                    'failed_devices_up': [],
+                    'devices_down':
+                        {{'device': 4, 'exists': True},
+                        {'device': 5, 'exists': True}},
+                    'failed_devices_down': []}
+        self._test_get_devices_list(devices_up_side_effect,
+                                    devices_down_side_effect,
+                                    expected)
+
+    def test_update_device_list_failed_devices(self):
+
+        devices_up_side_effect = [1, Exception('testdevice'), 3]
+        devices_down_side_effect = [{'device': 4, 'exists': True},
+                        Exception('testdevice')]
+        expected = {'devices_up': [{'device': 1}, {'device':2}],
+                    'failed_devices_up': [2],
+                    'devices_down':
+                        [{'device': 4, 'exists': True}],
+                    'failed_devices_down': [5]}
+
+        self._test_get_devices_list(devices_up_side_effect,
+                                    devices_down_side_effect,
+                                    expected)
+
+    def test_update_device_list_empty_devices(self):
+
+        expected = {'devices_up': [],
+                    'failed_devices_up': [],
+                    'devices_down': [],
+                    'failed_devices_down': []}
+
+        kwargs = {'host': 'fake_host', 'agent_id': 'fake_agent_id'}
+        res = self.callbacks.update_device_list(
+            'fake_context', devices_up=[], devices_down=[], **kwargs)
+        self.assertEqual(expected, res)
 
 
 class RpcApiTestCase(base.BaseTestCase):
@@ -281,6 +367,15 @@ class RpcApiTestCase(base.BaseTestCase):
                            agent_id='fake_agent_id',
                            host='fake_host')
 
+    def test_update_device_list_down(self):
+        rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
+        self._test_rpc_api(rpcapi, None,
+                           'update_device_list_down', rpc_method='call',
+                           devices=['fake_device1', 'fake_device2'],
+                           agent_id='fake_agent_id',
+                           host='fake_host',
+                           version='1.5')
+
     def test_tunnel_sync(self):
         rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
         self._test_rpc_api(rpcapi, None,
@@ -297,3 +392,12 @@ class RpcApiTestCase(base.BaseTestCase):
                            device='fake_device',
                            agent_id='fake_agent_id',
                            host='fake_host')
+
+    def test_update_device_list_up(self):
+        rpcapi = agent_rpc.PluginApi(topics.PLUGIN)
+        self._test_rpc_api(rpcapi, None,
+                           'update_device_list_up', rpc_method='call',
+                           devices=['fake_device1', 'fake_device2'],
+                           agent_id='fake_agent_id',
+                           host='fake_host',
+                           version='1.5')
