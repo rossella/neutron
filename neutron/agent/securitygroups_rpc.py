@@ -106,6 +106,8 @@ class SecurityGroupAgentRpc(object):
         # Stores devices for which firewall should be refreshed when
         # deferred refresh is enabled.
         self.devices_to_refilter = set()
+        # Stores networks whose ports need a firewall refresh
+        self.networks_to_refilter = set()
         # Flag raised when a global refresh is needed
         self.global_refresh_firewall = False
         self._use_enhanced_rpc = None
@@ -222,15 +224,15 @@ class SecurityGroupAgentRpc(object):
             else:
                 self.refresh_firewall(devices)
 
-    def security_groups_provider_updated(self):
+    def security_groups_provider_updated(self, networks_to_update):
         LOG.info(_LI("Provider rule updated"))
         if self.defer_refresh_firewall:
-            # NOTE(salv-orlando): A 'global refresh' might not be
-            # necessary if the subnet for which the provider rules
-            # were updated is known
-            self.global_refresh_firewall = True
+            if networks_to_update is None:
+                self.global_refresh_firewall = True
+            else:
+                self.networks_to_update |= set(networks_to_update)
         else:
-            self.refresh_firewall()
+            self.refresh_firewall(None, networks_to_update)
 
     def remove_devices_filter(self, device_ids):
         if not device_ids:
@@ -244,7 +246,7 @@ class SecurityGroupAgentRpc(object):
                 self.firewall.remove_port_filter(device)
 
     @skip_if_noopfirewall_or_firewall_disabled
-    def refresh_firewall(self, device_ids=None):
+    def refresh_firewall(self, device_ids=None, networks_ids=None):
         LOG.info(_LI("Refresh firewall rules"))
         if not device_ids:
             device_ids = self.firewall.ports.keys()
@@ -261,6 +263,10 @@ class SecurityGroupAgentRpc(object):
             devices = self.plugin_rpc.security_group_rules_for_devices(
                 self.context, device_ids)
 
+        if networks_ids:
+            devices_info = self.plugin_rpc.security_group_info_for_networks(
+                self.context, networks_ids)
+            #TODO(rossella_s) add info to devices, security_groups, security_group_member_ips
         with self.firewall.defer_apply():
             for device in devices.values():
                 LOG.debug("Update port filter for %s", device['device'])
@@ -273,7 +279,7 @@ class SecurityGroupAgentRpc(object):
                     security_groups, security_group_member_ips)
 
     def firewall_refresh_needed(self):
-        return self.global_refresh_firewall or self.devices_to_refilter
+        return self.global_refresh_firewall or self.devices_to_refilter or self.networks_to_refilter
 
     def setup_port_filters(self, new_devices, updated_devices):
         """Configure port filters for devices.
@@ -289,8 +295,10 @@ class SecurityGroupAgentRpc(object):
         # These data structures are cleared here in order to avoid
         # losing updates occurring during firewall refresh
         devices_to_refilter = self.devices_to_refilter
+        networks_to_refilter = self.networks_to_refilter
         global_refresh_firewall = self.global_refresh_firewall
         self.devices_to_refilter = set()
+        self.networks_to_refilter = set()
         self.global_refresh_firewall = False
         # We must call prepare_devices_filter() after we've grabbed
         # self.devices_to_refilter since an update for a new port
@@ -314,7 +322,7 @@ class SecurityGroupAgentRpc(object):
             if updated_devices:
                 LOG.debug("Refreshing firewall for %d devices",
                           len(updated_devices))
-                self.refresh_firewall(updated_devices)
+                self.refresh_firewall(updated_devices, networks_to_refilter)
 
 
 # TODO(armax): for bw compat with external dependencies; to be dropped in M.

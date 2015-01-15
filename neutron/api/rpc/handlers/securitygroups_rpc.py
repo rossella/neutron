@@ -54,6 +54,13 @@ class SecurityGroupServerRpcApi(object):
         return cctxt.call(context, 'security_group_info_for_devices',
                           devices=devices)
 
+    def security_group_info_for_networks(self, context, networks):
+        LOG.debug("Get security group information for devices belonging "
+                  "to networks via rpc %r",
+                  networks)
+        cctxt = self.client.prepare(version='1.3')
+        return cctxt.call(context, 'security_group_info_for_networks',
+                          networks=networks)
 
 class SecurityGroupServerRpcCallback(object):
     """Callback for SecurityGroup agent RPC in plugin implementations.
@@ -69,7 +76,7 @@ class SecurityGroupServerRpcCallback(object):
 
     # NOTE: target must not be overridden in subclasses
     # to keep RPC API version consistent across plugins.
-    target = oslo_messaging.Target(version='1.2',
+    target = oslo_messaging.Target(version='1.3',
                                    namespace=constants.RPC_NAMESPACE_SECGROUP)
 
     @property
@@ -113,6 +120,22 @@ class SecurityGroupServerRpcCallback(object):
         ports = self._get_devices_info(context, devices_info)
         return self.plugin.security_group_info_for_ports(context, ports)
 
+    def security_group_info_for_networks(self, context, **kwargs):
+        """Return security group information for devices belonging to networks.
+
+        :params networks: list of networks
+        :returns:
+        sg_info{
+          'security_groups': {sg_id: [rule1, rule2]}
+          'sg_member_ips': {sg_id: {'IPv4': set(), 'IPv6': set()}}
+          'devices': {device_id: {device_info}}
+        }
+
+        Note that sets are serialized into lists by rpc code.
+        """
+        networks = kwargs.get('networks')
+        return self.plugin.security_group_info_for_networks(context, networks)
+
 
 class SecurityGroupAgentRpcApiMixin(object):
     """RPC client for security group methods to the agent.
@@ -153,12 +176,14 @@ class SecurityGroupAgentRpcApiMixin(object):
         cctxt.cast(context, 'security_groups_member_updated',
                    security_groups=security_groups)
 
-    def security_groups_provider_updated(self, context):
+    def security_groups_provider_updated(self, context,
+                                         networks_to_update=None):
         """Notify provider updated security groups."""
-        cctxt = self.client.prepare(version=self.SG_RPC_VERSION,
+        cctxt = self.client.prepare(version=1.3,
                                     topic=self._get_security_group_topic(),
                                     fanout=True)
-        cctxt.cast(context, 'security_groups_provider_updated')
+        cctxt.cast(context, 'security_groups_provider_updated',
+                   networks_to_update=networks_to_update)
 
 
 class SecurityGroupAgentRpcCallbackMixin(object):
@@ -205,6 +230,7 @@ class SecurityGroupAgentRpcCallbackMixin(object):
     def security_groups_provider_updated(self, context, **kwargs):
         """Callback for security group provider update."""
         LOG.debug("Provider rule updated")
+        devices_to_update = kwargs.get('devices_to_update')
         if not self.sg_agent:
             return self._security_groups_agent_not_set()
-        self.sg_agent.security_groups_provider_updated()
+        self.sg_agent.security_groups_provider_updated(devices_to_update)

@@ -148,22 +148,29 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         occurs and the plugin agent fetches the update provider
         rule in the other RPC call (security_group_rules_for_devices).
         """
-        security_groups_provider_updated = False
+        sg_provider_updated_networks = set()
         sec_groups = set()
         for port in ports:
             if port['device_owner'] == q_const.DEVICE_OWNER_DHCP:
-                security_groups_provider_updated = True
+                sg_provider_updated_networks.add(
+                    port['network_id'])
             # For IPv6, provider rule need to be updated in case router
             # interface is created or updated after VM port is created.
             elif port['device_owner'] == q_const.DEVICE_OWNER_ROUTER_INTF:
                 if any(netaddr.IPAddress(fixed_ip['ip_address']).version == 6
                        for fixed_ip in port['fixed_ips']):
-                    security_groups_provider_updated = True
+                    sg_provider_updated_networks.add(
+                        port['network_id'])
             else:
                 sec_groups |= set(port.get(ext_sg.SECURITYGROUPS))
 
-        if security_groups_provider_updated:
-            self.notifier.security_groups_provider_updated(context)
+        if sg_provider_updated_networks:
+            ports_query = context.session.query(models_v2.Port.id).filter(
+                models_v2.Port.network_id.in_(
+                    sg_provider_updated_networks)).all()
+            ports_to_update = [p.id for p in ports_query]
+            self.notifier.security_groups_provider_updated(
+                context, ports_to_update)
         if sec_groups:
             self.notifier.security_groups_member_updated(
                 context, list(sec_groups))
@@ -171,11 +178,7 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
     def notify_security_groups_member_updated(self, context, port):
         self.notify_security_groups_member_updated_bulk(context, [port])
 
-    def security_group_info_for_ports(self, context, ports):
-        sg_info = {'devices': ports,
-                   'security_groups': {},
-                   'sg_member_ips': {}}
-        rules_in_db = self._select_rules_for_ports(context, ports)
+    def _process_rules_db(self, context, rules_in_db, sg_info):
         remote_security_group_info = {}
         for (port_id, rule_in_db) in rules_in_db:
             remote_gid = rule_in_db.get('remote_group_id')
@@ -222,6 +225,23 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         # rules still reside in sg_info['devices'] [port_id]
         self._apply_provider_rule(context, sg_info['devices'])
 
+    def security_group_info_for_ports(self, context, ports):
+        sg_info = {'devices': ports,
+                   'security_groups': {},
+                   'sg_member_ips': {}}
+        rules_in_db = self._select_rules_for_ports(context, ports)
+        self._process_rules_db(context, rules_in_db, sg_info)
+
+        return self._get_security_group_member_ips(context, sg_info)
+
+    def security_group_info_for_networks(self, context, networks):
+        # NOTE (rossella_s) need to populate devices
+        sg_info = {'devices': ports,
+                   'security_groups': {},
+                   'sg_member_ips': {}}
+        rules_in_db = self._select_rules_for_networks(context, networks)
+        self._process_rules_db(context, rules_in_db, sg_info)
+
         return self._get_security_group_member_ips(context, sg_info)
 
     def _get_security_group_member_ips(self, context, sg_info):
@@ -247,6 +267,22 @@ class SecurityGroupServerRpcMixin(sg_db.SecurityGroupDbMixin):
         query = query.join(sg_db.SecurityGroupRule,
                            sgr_sgid == sg_binding_sgid)
         query = query.filter(sg_binding_port.in_(ports.keys()))
+        return query.all()
+
+    def _select_rules_for_networks(self, context, networks):
+        if not networks:
+            return []
+        sg_binding_port = sg_db.SecurityGroupPortBinding.port_id
+        sg_binding_sgid = sg_db.SecurityGroupPortBinding.security_group_id
+
+        sgr_sgid = sg_db.SecurityGroupRule.security_group_id
+
+        query = context.session.query(sg_binding_port,
+                                      sg_db.SecurityGroupRule)
+        query = query.join(sg_db.SecurityGroupRule,
+                           sgr_sgid == sg_binding_sgid)
+        query = query.join(models_v2.Port, models_v2.Port.id == sg_binding_port)
+        query = query.filter(models_v2.Port.network_id.in_(networks.keys()))
         return query.all()
 
     def _select_ips_for_remote_group(self, context, remote_group_ids):
