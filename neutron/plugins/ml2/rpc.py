@@ -207,9 +207,10 @@ class AgentNotifierApi(dvr_rpc.DVRAgentRpcApiMixin,
         cctxt.cast(context, 'network_delete', network_id=network_id)
 
     def port_update(self, context, port, network_type, segmentation_id,
-                    physical_network):
+                    physical_network, state_or_sec_group_updated=True):
         cctxt = self.client.prepare(topic=self.topic_port_update,
                                     fanout=True)
         cctxt.cast(context, 'port_update', port=port,
                    network_type=network_type, segmentation_id=segmentation_id,
-                   physical_network=physical_network)
+                   physical_network=physical_network,
+                   state_or_sec_group_updated=state_or_sec_group_updated)

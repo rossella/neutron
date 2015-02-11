@@ -221,7 +221,8 @@ class RpcApiTestCase(base.BaseTestCase):
                 fanout=True, port='fake_port',
                 network_type='fake_network_type',
                 segmentation_id='fake_segmentation_id',
-                physical_network='fake_physical_network')
+                physical_network='fake_physical_network',
+                state_or_sec_group_updated=True)
 
     def test_tunnel_update(self):
         rpcapi = plugin_rpc.AgentNotifierApi(topics.AGENT)
