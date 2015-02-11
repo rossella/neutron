@@ -498,6 +498,18 @@ class TestOvsNeutronAgent(base.BaseTestCase):
                                physical_network="physnet")
         self.assertEqual(set(['123']), self.agent.updated_ports)
 
+    def test_port_update_no_change_in_ip_or_sec_group(self):
+        port = {"id": "123",
+                "network_id": "124",
+                "admin_state_up": False}
+        self.agent.port_update("unused_context",
+                               port=port,
+                               network_type="vlan",
+                               segmentation_id="1",
+                               physical_network="physnet",
+                               state_or_sec_group_updated=False)
+        self.assertFalse(self.agent.updated_ports)
+
     def test_setup_physical_bridges(self):
         with contextlib.nested(
             mock.patch.object(ip_lib, "device_exists"),
