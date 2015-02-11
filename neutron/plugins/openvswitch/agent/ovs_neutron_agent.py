@@ -328,8 +328,13 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         # Even if full port details might be provided to this call,
         # they are not used since there is no guarantee the notifications
         # are processed in the same order as the relevant API requests
-        self.updated_ports.add(port['id'])
-        LOG.debug("port_update message processed for port %s", port['id'])
+        if kwargs.get('state_or_sec_group_updated', True):
+            self.updated_ports.add(port['id'])
+            LOG.debug("port_update message processed for port %s", port['id'])
+        else:
+            LOG.debug("port_update message received for port %s, no IP address"
+                      "change nor security group change, no action needed",
+                      port['id'])
 
     def tunnel_update(self, context, **kwargs):
         LOG.debug("tunnel_update received")
