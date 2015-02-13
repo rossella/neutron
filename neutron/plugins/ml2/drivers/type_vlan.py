@@ -25,6 +25,7 @@ from neutron.common import utils
 from neutron.db import api as db_api
 from neutron.db import model_base
 from neutron.openstack.common import log
+from neutron.openstack.common.db import exception as db_exc
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.common import utils as plugin_utils
 from neutron.plugins.ml2 import driver_api as api
@@ -152,13 +153,19 @@ class VlanTypeDriver(api.TypeDriver):
                                    'physical_network':
                                    alloc.physical_network})
                         session.delete(alloc)
+        LOG.info(_("VlanTypeDriver initialization complete"))
 
     def get_type(self):
         return p_const.TYPE_VLAN
 
     def initialize(self):
-        self._sync_vlan_allocations()
-        LOG.info(_("VlanTypeDriver initialization complete"))
+        for x in range(10):
+            try:
+                return self._sync_vlan_allocations()
+            except db_exc.DBDuplicateEntry:
+                LOG.info("Retrying to allocate the vlan")
+        LOG.warn(_("Failed to allocate vlans"))
+        sys.exit(1)
 
     def validate_provider_segment(self, segment):
         physical_network = segment.get(api.PHYSICAL_NETWORK)
