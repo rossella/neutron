@@ -113,26 +113,58 @@ class RpcCallbacksTestCase(base.BaseTestCase):
                                           cached_networks=cached_networks)
         self.assertTrue('fake_port' in cached_networks)
 
-    def test_get_devices_details_list(self):
+    def _test_get_devices_list(self, callback, side_effect, expected):
         devices = [1, 2, 3, 4, 5]
         kwargs = {'host': 'fake_host', 'agent_id': 'fake_agent_id'}
         with mock.patch.object(self.callbacks, 'get_device_details',
-                               side_effect=devices) as f:
-            res = self.callbacks.get_devices_details_list('fake_context',
-                                                          devices=devices,
-                                                          **kwargs)
-            self.assertEqual(devices, res)
+                               side_effect=side_effect) as f:
+            res = callback('fake_context', devices=devices, **kwargs)
+            self.assertEqual(expected, res)
             self.assertEqual(len(devices), f.call_count)
             calls = [mock.call('fake_context', device=i,
                                cached_networks={}, **kwargs)
                      for i in devices]
             f.assert_has_calls(calls)
 
+    def test_get_devices_details_list(self):
+        devices = [1, 2, 3, 4, 5]
+        expected = devices
+        callback = self.callbacks.get_devices_details_list
+        self._test_get_devices_details_list(callback,
+                                            devices,
+                                            expected)
+
     def test_get_devices_details_list_with_empty_devices(self):
         with mock.patch.object(self.callbacks, 'get_device_details') as f:
             res = self.callbacks.get_devices_details_list('fake_context')
             self.assertFalse(f.called)
             self.assertEqual([], res)
+
+    def test_get_devices_details_list_and_failed_devices(self):
+        devices = [1, 2, 3, 4, 5]
+        expected = {'devices': devices, 'failed_devices': []}
+        callback = (
+            self.callbacks.get_devices_details_list_and_failed_devices())
+        self._test_get_devices_details_list(callback,
+                                            devices,
+                                            expected)
+
+    def test_get_devices_details_list_and_failed_devices_failures(self):
+        devices = [1, Exception('testdevice'), 3,
+                   Exception('testdevice'), 5]
+        expected = {'devices': [1, 3, 5], 'failed_devices': [2, 4]}
+        callback = (
+            self.callbacks.get_devices_details_list_and_failed_devices())
+        self._test_get_devices_details_list(callback,
+                                            devices,
+                                            expected)
+
+    def test_get_devices_details_list_and_failed_devices_empty_dev(self):
+        with mock.patch.object(self.callbacks, 'get_device_details') as f:
+            res = self.callbacks.get_devices_details_list_and_failed_devices(
+                'fake_context')
+            self.assertFalse(f.called)
+            self.assertEqual({'devices': [], 'failed_devices': []}, res)
 
     def _test_update_device_not_bound_to_host(self, func):
         self.plugin.port_bound_to_host.return_value = False

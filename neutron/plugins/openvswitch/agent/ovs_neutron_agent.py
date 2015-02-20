@@ -1135,19 +1135,21 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
 
     def treat_devices_added_or_updated(self, devices, ovs_restarted):
         skipped_devices = []
-        try:
-            devices_details_list = self.plugin_rpc.get_devices_details_list(
+        devices_details_list = (
+            self.plugin_rpc.get_devices_details_list_and_failed_devices(
                 self.context,
                 devices,
                 self.agent_id,
-                cfg.CONF.host)
-        except Exception as e:
-            raise DeviceListRetrievalError(devices=devices, error=e)
+                cfg.CONF.host))
+        if devices_details_list.get('failed_devices'):
+            #TODO(rossella_s) handle better the resync in next patches,
+            # this is just to preserve the current behavior
+            raise DeviceListRetrievalError(devices=devices)
 
         devices_up = []
         devices_down = []
-
-        for details in devices_details_list:
+        devices = devices_details_list.get('devices')
+        for details in devices:
             device = details['device']
             LOG.debug("Processing port: %s", device)
             port = self.int_br.get_vif_port_by_id(device)
@@ -1205,17 +1207,18 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         return skipped_devices
 
     def treat_ancillary_devices_added(self, devices):
-        try:
-            devices_details_list = self.plugin_rpc.get_devices_details_list(
+        devices_details_list = (
+            self.plugin_rpc.get_devices_details_list_and_failed_devices(
                 self.context,
                 devices,
                 self.agent_id,
-                cfg.CONF.host)
-        except Exception as e:
-            raise DeviceListRetrievalError(devices=devices, error=e)
-
+                cfg.CONF.host))
+        if devices_details_list.get('failed_devices'):
+            #TODO(rossella_s) handle better the resync in next patches,
+            # this is just to preserve the current behavior
+            raise DeviceListRetrievalError(devices=devices)
         devices_added = []
-        for details in devices_details_list:
+        for details in devices_details_list.get('devices'):
             devices_added.append(details['device'])
         LOG.info(_LI("Ancillary Ports %s added"), devices_added)
 

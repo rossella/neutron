@@ -48,7 +48,8 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
     #       the device port
     #   1.4 tunnel_sync rpc signature upgrade to obtain 'host'
     #   1.5 Support update_device_list_up and update_device_list_down
-    target = oslo_messaging.Target(version='1.5')
+    #   1.6 Add get_devices_details_list_and_failed_devices
+    target = oslo_messaging.Target(version='1.6')
 
     def __init__(self, notifier, type_manager):
         self.setup_tunnel_callback_mixin(notifier, type_manager)
@@ -130,6 +131,23 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
             )
             for device in kwargs.pop('devices', [])
         ]
+
+    def get_devices_details_list_and_failed_devices(self,
+                                                    rpc_context,
+                                                    **kwargs):
+        devices = []
+        failed_devices = []
+        for device in kwargs.pop('devices'):
+            try:
+                devices.append(self.get_device_details(
+                               rpc_context,
+                               device=device,
+                               **kwargs))
+            except Exception:
+                failed_devices.append(device)
+
+        return {'devices': devices,
+                'failed_devices': failed_devices}
 
     def update_device_down(self, rpc_context, **kwargs):
         """Device no longer exists on agent."""

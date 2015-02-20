@@ -90,6 +90,7 @@ class PluginApi(object):
               the device port
         1.4 - tunnel_sync rpc signature upgrade to obtain 'host'
         1.5 - Support update_device_list_up and update_device_list_down
+        1.6 - Add get_devices_details_list_and_failed_devices
     '''
 
     def __init__(self, topic):
@@ -117,6 +118,13 @@ class PluginApi(object):
                 for device in devices
             ]
         return res
+
+    def get_devices_details_list_and_failed_devices(self, context, devices,
+                                                    agent_id, host=None):
+        cctxt = self.client.prepare(version='1.6')
+        return cctxt.call(context,
+                          'get_devices_details_list_and_failed_devices',
+                          devices=devices, agent_id=agent_id, host=host)
 
     def update_device_down(self, context, device, agent_id, host=None):
         cctxt = self.client.prepare()
