@@ -302,6 +302,92 @@ class TestOvsNeutronAgent(object):
                                       updated_ports)
         self.assertEqual(expected, actual)
 
+    def test_process_ports_events_returns_current_for_unchanged_ports(self):
+        with mock.patch.object(self.agent, 'check_changed_vlans',
+                               return_value=set()):
+            events = {'added': [], 'removed': []}
+            registered_ports = set([1, 3])
+            expected = {'current': registered_ports, 'added': set(),
+                        'removed': set()}
+            actual = self.agent.process_ports_events(events, registered_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_returns_port_changes(self):
+        events = {'added': [{'name': 'port3', 'ofport': 3}],
+                  'removed': [{'name': 'port2', 'ofport': 2}]}
+        registered_ports = set([1, 2])
+        expected = dict(current=set([1, 3]), added=set([3]), removed=set([2]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                              side_effect=[3, 2]), \
+            mock.patch.object(self.agent, 'check_changed_vlans',
+                              return_value=set()):
+            actual = self.agent.process_ports_events(events, registered_ports)
+            self.assertEqual(expected, actual)
+
+    def _test_process_port_events_with_updated_ports(self, updated_ports):
+        events = {'added': [{'name': 'port3', 'ofport': 3}],
+                  'removed': [{'name': 'port2', 'ofport': 2}]}
+        registered_ports = set([1, 2, 4])
+        expected = dict(current=set([1, 3, 4]), added=set([3]),
+                        removed=set([2]), updated=set([4]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                              side_effect=[3, 2]), \
+            mock.patch.object(self.agent, 'check_changed_vlans',
+                              return_value=set()):
+
+            actual = self.agent.process_ports_events(
+                events, registered_ports, updated_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_finds_known_updated_ports(self):
+        self._test_process_port_events_with_updated_ports(set([4]))
+
+    def test_process_port_events_ignores_unknown_updated_ports(self):
+        # the port '5' was not seen on current ports. Hence it has either
+        # never been wired or already removed and should be ignored
+        self._test_process_port_events_with_updated_ports(set([4, 5]))
+
+    def test_process_port_events_ignores_updated_port_if_removed(self):
+        events = {'added': [{'name': 'port3', 'ofport': 3}],
+                  'removed': [{'name': 'port2', 'ofport': 2}]}
+        registered_ports = set([1, 2])
+        updated_ports = set([1, 2])
+        expected = dict(current=set([1, 3]), added=set([3]),
+                        removed=set([2]), updated=set([1]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                              side_effect=[3, 2]), \
+            mock.patch.object(self.agent, 'check_changed_vlans',
+                              return_value=set()):
+
+            actual = self.agent.process_ports_events(
+                events, registered_ports, updated_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_no_vif_changes_return_updated_port_only(self):
+        events = {'added': [], 'removed': []}
+        registered_ports = set([1, 2, 3])
+        updated_ports = set([2])
+        expected = dict(current=registered_ports, updated=set([2]),
+                        added=set(), removed=set())
+        with mock.patch.object(self.agent, 'check_changed_vlans',
+                               return_value=set()):
+            actual = self.agent.process_ports_events(
+                events, registered_ports, updated_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_ignores_removed_port_if_never_added(self):
+        events = {'added': [],
+                  'removed': [{'name': 'port2', 'ofport': 2}]}
+        registered_ports = set([1])
+        expected = dict(current=registered_ports, added=set(),
+                        removed=set())
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                              side_effect=[2]), \
+            mock.patch.object(self.agent, 'check_changed_vlans',
+                              return_value=set()):
+            actual = self.agent.process_ports_events(events, registered_ports)
+            self.assertEqual(expected, actual)
+
     def test_update_ports_returns_changed_vlan(self):
         br = self.br_int_cls('br-int')
         mac = "ca:fe:de:ad:be:ef"
@@ -995,7 +1081,7 @@ class TestOvsNeutronAgent(object):
                 mock.patch.object(log.KeywordArgumentAdapter,
                                   'exception') as log_exception,\
                 mock.patch.object(self.mod_agent.OVSNeutronAgent,
-                                  'scan_ports') as scan_ports,\
+                                  'process_ports_events') as process_p_events,\
                 mock.patch.object(
                     self.mod_agent.OVSNeutronAgent,
                     'process_network_ports') as process_network_ports,\
@@ -1010,7 +1096,7 @@ class TestOvsNeutronAgent(object):
                                   'update_stale_ofport_rules') as update_stale:
             log_exception.side_effect = Exception(
                 'Fake exception to get out of the loop')
-            scan_ports.side_effect = [reply2, reply3]
+            process_p_events.side_effect = [reply2, reply3]
             process_network_ports.side_effect = [
                 False, Exception('Fake exception to get out of the loop')]
             check_ovs_status.side_effect = args
@@ -1019,19 +1105,20 @@ class TestOvsNeutronAgent(object):
             except Exception:
                 pass
 
-            scan_ports.assert_has_calls([
-                mock.call(set(), set()),
-                mock.call(set(), set())
-            ])
-            process_network_ports.assert_has_calls([
-                mock.call(reply2, False),
-                mock.call(reply3, True)
-            ])
-            self.assertTrue(update_stale.called)
-            # Verify the OVS restart we triggered in the loop
-            # re-setup the bridges
-            setup_int_br.assert_has_calls([mock.call()])
-            setup_phys_br.assert_has_calls([mock.call({})])
+        process_p_events.assert_has_calls([
+            mock.call({'removed': [], 'added': []}, set(), set()),
+            mock.call({'removed': [], 'added': []}, set(['tap0']), set())
+        ])
+
+        process_network_ports.assert_has_calls([
+            mock.call(reply2, False),
+            mock.call(reply3, True)
+        ])
+        self.assertTrue(update_stale.called)
+        # Verify the OVS restart we triggered in the loop
+        # re-setup the bridges
+        setup_int_br.assert_has_calls([mock.call()])
+        setup_phys_br.assert_has_calls([mock.call({})])
 
     def test_ovs_status(self):
         self._test_ovs_status(constants.OVS_NORMAL,
