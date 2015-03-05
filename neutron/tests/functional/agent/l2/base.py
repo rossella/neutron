@@ -118,11 +118,34 @@ class OVSAgentTestFramework(base.BaseOVSLinuxTestCase):
         if tunnel_types:
             self.addCleanup(self.ovs.delete_bridge, self.br_tun)
         agent.sg_agent = mock.Mock()
+        agent.ancillary_brs = None
         return agent
 
-    def start_agent(self, agent):
+    def _mock_get_events(self, agent, polling_manager, ports):
+        get_events = polling_manager.get_events
+        p_ids = [p['id'] for p in ports]
+
+        def filter_events():
+            events = get_events()
+            filtered_ports = []
+            for dev in events['added']:
+                iface_id = agent.int_br.portid_from_external_ids(
+                    dev.get('external_ids', []))
+                if iface_id in p_ids:
+                    # if the event is not about a port that was created by
+                    # this test, we filter the event out. Since these tests are
+                    # not run in isolation processing all the events might make
+                    # some test fail ( e.g. the agent might keep resycing
+                    # because it keeps finding not ready ports that are created
+                    # by other tests)
+                    filtered_ports.append(dev)
+            return {'added': filtered_ports, 'removed': events['removed']}
+        polling_manager.get_events = mock.Mock(side_effect=filter_events)
+
+    def start_agent(self, agent, ports=[]):
         self.setup_agent_rpc_mocks(agent)
         polling_manager = polling.InterfacePollingMinimizer()
+        self._mock_get_events(agent, polling_manager, ports)
         self.addCleanup(polling_manager.stop)
         polling_manager.start()
         agent_utils.wait_until_true(
@@ -283,10 +306,10 @@ class OVSAgentTestFramework(base.BaseOVSLinuxTestCase):
 
     def setup_agent_and_ports(self, port_dicts, create_tunnels=True,
                               trigger_resync=False):
-        self.agent = self.create_agent(create_tunnels=create_tunnels)
-        self.start_agent(self.agent)
-        self.network = self._create_test_network_dict()
         self.ports = port_dicts
+        self.agent = self.create_agent(create_tunnels=create_tunnels)
+        self.start_agent(self.agent, ports=self.ports)
+        self.network = self._create_test_network_dict()
         if trigger_resync:
             self._prepare_resync_trigger(self.agent)
         self._plug_ports(self.network, self.ports, self.agent)
