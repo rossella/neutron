@@ -349,6 +349,16 @@ class OVSBridge(BaseOVS):
                 pass
         return port_map
 
+    def process_port_iface_id(self, result):
+        if result['ofport'] == UNASSIGNED_OFPORT:
+            LOG.warn(_LW("Found not yet ready openvswitch port: %s"),
+                     result['name'])
+        elif result['ofport'] == INVALID_OFPORT:
+            LOG.warn(_LW("Found failed openvswitch port: %s"),
+                     result['name'])
+        elif 'attached-mac' in result['external_ids']:
+            return self.portid_from_external_ids(result['external_ids'])
+
     def get_vif_port_set(self):
         edge_ports = set()
         port_names = self.get_port_name_list()
@@ -357,16 +367,9 @@ class OVSBridge(BaseOVS):
             columns=['name', 'external_ids', 'ofport'], if_exists=True)
         results = cmd.execute(check_error=True)
         for result in results:
-            if result['ofport'] == UNASSIGNED_OFPORT:
-                LOG.warn(_LW("Found not yet ready openvswitch port: %s"),
-                         result['name'])
-            elif result['ofport'] == INVALID_OFPORT:
-                LOG.warn(_LW("Found failed openvswitch port: %s"),
-                         result['name'])
-            elif 'attached-mac' in result['external_ids']:
-                port_id = self.portid_from_external_ids(result['external_ids'])
-                if port_id:
-                    edge_ports.add(port_id)
+            port_id = self.process_port_iface_id(result)
+            if port_id:
+                edge_ports.add(port_id)
         return edge_ports
 
     def portid_from_external_ids(self, external_ids):
