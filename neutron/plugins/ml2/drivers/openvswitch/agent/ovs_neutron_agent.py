@@ -30,6 +30,7 @@ from six import moves
 from neutron.agent.common import ovs_lib
 from neutron.agent.common import polling
 from neutron.agent.common import utils
+from neutron.agent.l3 import agent as l3_agent
 from neutron.agent.linux import ip_lib
 from neutron.agent import rpc as agent_rpc
 from neutron.agent import securitygroups_rpc as sg_rpc
@@ -1085,6 +1086,60 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         port_info['removed'] = registered_ports - cur_ports
         return port_info
 
+    def process_ports_events(self, events, registered_ports, ancillary_ports,
+                             updated_ports=None):
+        port_info = {}
+        port_info['added'] = set()
+        port_info['removed'] = set()
+        port_info['current'] = registered_ports
+
+        ancillary_port_info = {}
+        ancillary_port_info['added'] = set()
+        ancillary_port_info['removed'] = set()
+        ancillary_port_info['current'] = (
+            ancillary_ports if ancillary_ports else set())
+
+        def _process_device(device, devices, ancillary_devices):
+            # check 'iface-id' is set otherwise is not a port
+            # the agent should care about
+            iface_id = self.int_br.process_port_iface_id(device)
+            if iface_id:
+                # check if device belong to ancillary bridge
+                if device['name'].startswith(
+                    l3_agent.EXTERNAL_DEV_PREFIX):
+                    ancillary_devices.add(iface_id)
+                else:
+                    devices.add(iface_id)
+
+        for device in events['added']:
+            _process_device(device, port_info['added'],
+                            ancillary_port_info['added'])
+        for device in events['removed']:
+            _process_device(device, port_info['removed'],
+                            ancillary_port_info['removed'])
+
+        if updated_ports is None:
+            updated_ports = set()
+        updated_ports.update(self.check_changed_vlans(registered_ports))
+
+        # Disregard devices that were never noticed by the agent
+        port_info['removed'] &= port_info['current']
+        port_info['current'] |= port_info['added']
+        port_info['current'] -= port_info['removed']
+
+        ancillary_port_info['removed'] &= ancillary_port_info['current']
+        ancillary_port_info['current'] |= ancillary_port_info['added']
+        ancillary_port_info['current'] -= ancillary_port_info['removed']
+
+        if updated_ports:
+            # Some updated ports might have been removed in the
+            # meanwhile, and therefore should not be processed.
+            # In this case the updated port won't be found among
+            # current ports.
+            updated_ports &= port_info['current']
+            port_info['updated'] = updated_ports
+        return port_info, ancillary_port_info
+
     def scan_ports(self, registered_ports, updated_ports=None):
         cur_ports = self.int_br.get_vif_port_set()
         self.int_br_device_count = len(cur_ports)
@@ -1494,7 +1549,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
             polling_manager = polling.get_polling_manager(
                 minimize_polling=False)
 
-        sync = True
+        sync = False
         ports = set()
         updated_ports_copy = set()
         ancillary_ports = set()
@@ -1509,12 +1564,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                                         'removed': 0}}
             LOG.debug("Agent rpc_loop - iteration:%d started",
                       self.iter_num)
-            if sync:
-                LOG.info(_LI("Agent out of sync with plugin!"))
-                ports.clear()
-                ancillary_ports.clear()
-                sync = False
-                polling_manager.force_polling()
             ovs_status = self.check_ovs_status()
             if ovs_status == constants.OVS_RESTARTED:
                 self.setup_integration_br()
@@ -1545,7 +1594,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     LOG.exception(_LE("Error while synchronizing tunnels"))
                     tunnel_sync = True
             ovs_restarted |= (ovs_status == constants.OVS_RESTARTED)
-            if self._agent_has_updates(polling_manager) or ovs_restarted:
+            if self._agent_has_updates(polling_manager) or sync:
                 try:
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
                               "starting polling. Elapsed:%(elapsed).3f",
@@ -1557,8 +1606,34 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     # between these two statements, this will be thread-safe
                     updated_ports_copy = self.updated_ports
                     self.updated_ports = set()
-                    reg_ports = (set() if ovs_restarted else ports)
-                    port_info = self.scan_ports(reg_ports, updated_ports_copy)
+                    if sync:
+                        LOG.info(_LI("Agent out of sync with plugin!"))
+                        ports.clear()
+                        if self.ancillary_brs:
+                            ancillary_ports.clear()
+                        sync = False
+                        # reset the queue of events since the agent will scan
+                        # all the ports to avoid processing the same event at
+                        # next iteration
+                        polling_manager.get_events()
+                        port_info = self.scan_ports(ports,
+                                                    updated_ports_copy)
+                        # Treat ancillary devices if they exist
+                        if self.ancillary_brs:
+                            ancillary_port_info = self.scan_ancillary_ports(
+                                 ancillary_ports)
+                            LOG.debug("Agent rpc_loop - iteration:%(iter_num)d"
+                                      " - ancillary port info retrieved. "
+                                      "Elapsed:%(elapsed).3f",
+                                      {'iter_num': self.iter_num,
+                                       'elapsed': time.time() - start})
+                    else:
+                        events = polling_manager.get_events()
+                        ancillary_ports = (
+                            ancillary_ports if self.ancillary_brs else None)
+                        port_info, ancillary_port_info = (
+                                self.process_ports_events(events, ports,
+                                    ancillary_ports, updated_ports_copy))
                     self.process_deleted_ports(port_info)
                     self.update_stale_ofport_rules()
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
@@ -1567,15 +1642,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                               {'iter_num': self.iter_num,
                                'elapsed': time.time() - start})
 
-                    # Treat ancillary devices if they exist
-                    if self.ancillary_brs:
-                        ancillary_port_info = self.scan_ancillary_ports(
-                            ancillary_ports)
-                        LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
-                                  "ancillary port info retrieved. "
-                                  "Elapsed:%(elapsed).3f",
-                                  {'iter_num': self.iter_num,
-                                   'elapsed': time.time() - start})
                     # Secure and wire/unwire VIFs and update their status
                     # on Neutron server
                     if (self._port_info_has_changes(port_info) or
