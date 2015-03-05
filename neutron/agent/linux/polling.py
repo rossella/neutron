@@ -107,3 +107,6 @@ class InterfacePollingMinimizer(BasePollingManager):
         # collect output.
         eventlet.sleep()
         return self._monitor.has_updates
+
+    def get_events(self):
+        return self._monitor.get_events()

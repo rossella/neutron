@@ -64,9 +64,6 @@ class TestSimpleInterfaceMonitor(base.BaseTestCase):
         self.monitor._kill_event = eventlet.event.Event()
         self.assertTrue(self.monitor.is_active)
 
-    def test_has_updates_is_true_by_default(self):
-        self.assertTrue(self.monitor.has_updates)
-
     def test_has_updates_is_false_if_active_with_no_output(self):
         target = ('neutron.agent.linux.ovsdb_monitor.SimpleInterfaceMonitor'
                   '.is_active')
@@ -97,3 +94,12 @@ class TestSimpleInterfaceMonitor(base.BaseTestCase):
                 return_value=output):
             self.monitor._read_stdout()
         self.assertFalse(self.monitor.data_received)
+
+    def test_get_event_empties_has_updates(self):
+        with mock.patch.object(
+                self.monitor, 'process_events') as process_events:
+            self.monitor.new_events = {'added': ['foo'], 'removed': ['foo1']}
+            self.assertTrue(self.monitor.has_updates)
+            self.monitor.get_events()
+            self.assertTrue(process_events.called)
+            self.assertFalse(self.monitor.has_updates)

@@ -100,9 +100,38 @@ class TestSimpleInterfaceMonitor(BaseMonitorTest):
     def test_has_updates(self):
         self.assertTrue(self.monitor.has_updates,
                         'Initial call should always be true')
+        # clear the event list
+        self.monitor.get_events()
         self.assertFalse(self.monitor.has_updates,
                          'has_updates without port addition should be False')
         self.create_resource('test-port-', self.bridge.add_port)
         # has_updates after port addition should become True
-        while not self.monitor.has_updates:
-            eventlet.sleep(0.01)
+        self.assertTrue(self.monitor.has_updates)
+
+    def test_get_events(self):
+        devices = self.monitor.get_events()
+        self.assertTrue(devices.get('added'),
+                        'Initial call should always be true')
+        self.assertFalse(devices.get('removed'),
+                         'Initial call, removed devices should be empty')
+        port_name = 'test-port'
+        self.bridge.add_port(port_name)
+        devices = self.monitor.get_events()
+        self.assertEqual(port_name, devices.get('added')[0]['name'])
+        self.assertFalse(devices.get('removed'), 'No device was removed')
+        self.bridge.delete_port(port_name)
+        devices = self.monitor.get_events()
+        self.assertEqual(port_name, devices.get('removed')[0]['name'])
+        self.assertFalse(devices.get('added'), 'No device was added')
+        # no new event
+        devices = self.monitor.get_events()
+        self.assertFalse(devices.get('added'), 'No device was added')
+        self.assertFalse(devices.get('removed'),'No device was removed')
+        # restart
+        self.monitor.stop()
+        self.monitor.start(block=True, timeout=60)
+        devices = self.monitor.get_events()
+        self.assertTrue(devices.get('added'),
+                        'Initial call should always be true')
+        self.assertFalse(devices.get('removed'),
+                         'Initial call, removed devices should be empty')
