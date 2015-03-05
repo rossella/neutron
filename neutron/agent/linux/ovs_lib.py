@@ -324,6 +324,22 @@ class OVSBridge(BaseOVS):
 
         return edge_ports
 
+    def process_port_iface_id(self, result):
+        if result['ofport'] == UNASSIGNED_OFPORT:
+            LOG.warn(_LW("Found not yet ready openvswitch port: %s"),
+                     result['name'])
+        elif result['ofport'] == INVALID_OFPORT:
+            LOG.warn(_LW("Found failed openvswitch port: %s"),
+                     result['name'])
+
+        elif 'attached-mac' in result['external_ids']:
+            external_ids = result['external_ids']
+            if 'iface-id' in external_ids:
+                return external_ids['iface-id']
+            elif 'xs-vif-uuid' in external_ids:
+                return self.get_xapi_iface_id(
+                    external_ids['xs-vif-uuid'])
+
     def get_vif_port_set(self):
         edge_ports = set()
         port_names = self.get_port_name_list()
@@ -332,20 +348,9 @@ class OVSBridge(BaseOVS):
             columns=['name', 'external_ids', 'ofport'], if_exists=True)
         results = cmd.execute(check_error=True)
         for result in results:
-            if result['ofport'] == UNASSIGNED_OFPORT:
-                LOG.warn(_LW("Found not yet ready openvswitch port: %s"),
-                         result['name'])
-            elif result['ofport'] == INVALID_OFPORT:
-                LOG.warn(_LW("Found failed openvswitch port: %s"),
-                         result['name'])
-            elif 'attached-mac' in result['external_ids']:
-                external_ids = result['external_ids']
-                if 'iface-id' in external_ids:
-                    edge_ports.add(external_ids['iface-id'])
-                elif 'xs-vif-uuid' in external_ids:
-                    iface_id = self.get_xapi_iface_id(
-                        external_ids['xs-vif-uuid'])
-                    edge_ports.add(iface_id)
+            iface_id = self.process_port_iface_id(result)
+            if iface_id:
+                edge_ports.add(iface_id)
         return edge_ports
 
     def get_port_tag_dict(self):

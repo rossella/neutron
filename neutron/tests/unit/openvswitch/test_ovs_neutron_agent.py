@@ -266,6 +266,73 @@ class TestOvsNeutronAgent(base.BaseTestCase):
                                       updated_ports)
         self.assertEqual(expected, actual)
 
+    def test_process_port_events_returns_current_only_for_unchanged_ports(self):
+        events = {'added': [], 'removed': []}
+        registered_ports = set([1, 3])
+        expected = {'current': registered_ports, 'added': set(),
+                    'removed': set()}
+        actual = self.agent.process_ports_events(events, registered_ports)
+        self.assertEqual(expected, actual)
+
+    def test_process_port_events_returns_port_changes(self):
+        events = {'added': [3], 'removed': [2]}
+        registered_ports = set([1, 2])
+        expected = dict(current=set([1, 3]), added=set([3]), removed=set([2]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                               side_effect=[3, 2]):
+            actual = self.agent.process_ports_events(events, registered_ports)
+            self.assertEqual(expected, actual)
+
+    def _test_process_port_events_with_updated_ports(self, updated_ports):
+        events = {'added': [3], 'removed': [2]}
+        registered_ports = set([1, 2, 4])
+        expected = dict(current=set([1, 3, 4]), added=set([3]),
+                        removed=set([2]), updated=set([4]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                               side_effect=[3, 2]):
+            actual = self.agent.process_ports_events(
+                events, registered_ports, updated_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_finds_known_updated_ports(self):
+        self._test_process_port_events_with_updated_ports(set([4]))
+
+    def test_process_port_events_ignores_unknown_updated_ports(self):
+        # the port '5' was not seen on current ports. Hence it has either
+        # never been wired or already removed and should be ignored
+        self._test_process_port_events_with_updated_ports(set([4, 5]))
+
+    def test_process_port_events_ignores_updated_port_if_removed(self):
+        events = {'added': [3], 'removed': [2]}
+        registered_ports = set([1, 2])
+        updated_ports = set([1, 2])
+        expected = dict(current=set([1, 3]), added=set([3]),
+                        removed=set([2]), updated=set([1]))
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                               side_effect=[3, 2]):
+            actual = self.agent.process_ports_events(
+                events, registered_ports, updated_ports)
+            self.assertEqual(expected, actual)
+
+    def test_process_port_events_no_vif_changes_returns_updated_port_only(self):
+        events = {'added': [], 'removed': []}
+        registered_ports = set([1, 2, 3])
+        updated_ports = set([2])
+        expected = dict(current=registered_ports, updated=set([2]))
+        actual = self.agent.process_ports_events(
+            registered_ports, updated_ports)
+        self.assertEqual(expected, actual)
+
+    def test_process_port_events_ignores_removed_port_if_never_added(self):
+        events = {'added': [], 'removed': [2]}
+        registered_ports = set([1])
+        expected = dict(current=registered_ports, added=set(),
+                        removed=set())
+        with mock.patch.object(self.agent.int_br, 'process_port_iface_id',
+                               side_effect=[2]):
+            actual = self.agent.process_ports_events(events, registered_ports)
+            self.assertEqual(expected, actual)
+
     def test_update_ports_returns_changed_vlan(self):
         br = ovs_lib.OVSBridge('br-int')
         mac = "ca:fe:de:ad:be:ef"

@@ -30,6 +30,7 @@ from six import moves
 
 from neutron.agent.common import config
 from neutron.agent import l2population_rpc
+from neutron.agent.l3 import agent as l3_agent
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import ovs_lib
 from neutron.agent.linux import polling
@@ -989,6 +990,46 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 br.set_db_attribute('Interface', phys_if_name,
                                     'options:peer', int_if_name)
 
+    def process_ports_events(self, events, registered_ports,
+                            updated_ports=None):
+        port_info = {}
+        port_info['added'] = set()
+        port_info['removed'] = set()
+        port_info['current'] = registered_ports
+
+        def _process_device(device, processed_devices):
+            # check that devices don't belong to ancillary bridges
+            if not device['name'].startswith(
+                    l3_agent.EXTERNAL_DEV_PREFIX):
+                # check 'iface-id' is set otherwise is not a port
+                # the agent should care about
+                iface_id = self.int_br.process_port_iface_id(device)
+                if iface_id:
+                    processed_devices.add(iface_id)
+        for device in events['added']:
+            _process_device(device, port_info['added'])
+        for device in events['removed']:
+            _process_device(device, port_info['removed'])
+
+        if updated_ports is None:
+            updated_ports = set()
+        updated_ports.update(self.check_changed_vlans(registered_ports))
+
+        if updated_ports:
+            # Some updated ports might have been removed in the
+            # meanwhile, and therefore should not be processed.
+            # In this case the updated port won't be found among
+            # current ports.
+            updated_ports -= port_info['removed']
+            if updated_ports:
+                port_info['updated'] = updated_ports
+        # Remove devices that the agent never noticed that were added
+        port_info['removed'] &= port_info['current']
+
+        port_info['current'] |= port_info['added']
+        port_info['current'] -= port_info['removed']
+        return port_info
+
     def scan_ports(self, registered_ports, updated_ports=None):
         cur_ports = self.int_br.get_vif_port_set()
         self.int_br_device_count = len(cur_ports)
@@ -1473,7 +1514,19 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     updated_ports_copy = self.updated_ports
                     self.updated_ports = set()
                     reg_ports = (set() if ovs_restarted else ports)
-                    port_info = self.scan_ports(reg_ports, updated_ports_copy)
+
+                    if (isinstance(polling_manager,
+                                   polling.InterfacePollingMinimizer) and
+                            reg_ports):
+                        events = polling_manager.get_events()
+                        port_info = self.process_ports_events(
+                            events, reg_ports, updated_ports_copy)
+                    # it's the first run or ovs was restarted or there
+                    # was a problem in syncing with the plugin, so
+                    # scan all the ports
+                    else:
+                        port_info = self.scan_ports(reg_ports,
+                                                    updated_ports_copy)
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
                               "port information retrieved. "
                               "Elapsed:%(elapsed).3f",
