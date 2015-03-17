@@ -1121,22 +1121,26 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 port_moves.append(name)
         return port_moves
 
-    def _get_port_info(self, registered_ports, cur_ports):
+    def _get_port_info(self, registered_ports, cur_ports,
+                       readd_registered_ports):
         port_info = {'current': cur_ports}
         # FIXME(salv-orlando): It's not really necessary to return early
         # if nothing has changed.
-        if cur_ports == registered_ports:
-            # No added or removed ports to set, just return here
+        if not readd_registered_ports and cur_ports == registered_ports:
             return port_info
-        port_info['added'] = cur_ports - registered_ports
-        # Remove all the known ports not found on the integration bridge
+
+        if readd_registered_ports:
+            port_info['added'] = cur_ports
+        else:
+            port_info['added'] = cur_ports - registered_ports
+        # Update port_info with ports not found on the integration bridge
         port_info['removed'] = registered_ports - cur_ports
         return port_info
 
-    def scan_ports(self, registered_ports, updated_ports=None):
+    def scan_ports(self, registered_ports, sync, updated_ports=None):
         cur_ports = self.int_br.get_vif_port_set()
         self.int_br_device_count = len(cur_ports)
-        port_info = self._get_port_info(registered_ports, cur_ports)
+        port_info = self._get_port_info(registered_ports, cur_ports, sync)
         if updated_ports is None:
             updated_ports = set()
         updated_ports.update(self.check_changed_vlans())
@@ -1150,11 +1154,11 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 port_info['updated'] = updated_ports
         return port_info
 
-    def scan_ancillary_ports(self, registered_ports):
+    def scan_ancillary_ports(self, registered_ports, sync):
         cur_ports = set()
         for bridge in self.ancillary_brs:
             cur_ports |= bridge.get_vif_port_set()
-        return self._get_port_info(registered_ports, cur_ports)
+        return self._get_port_info(registered_ports, cur_ports, sync)
 
     def check_changed_vlans(self):
         """Return ports which have lost their vlan tag.
@@ -1586,9 +1590,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                       self.iter_num)
             if sync:
                 LOG.info(_LI("Agent out of sync with plugin!"))
-                ports.clear()
-                ancillary_ports.clear()
-                sync = False
                 polling_manager.force_polling()
             ovs_status = self.check_ovs_status()
             if ovs_status == constants.OVS_RESTARTED:
@@ -1634,7 +1635,8 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     updated_ports_copy = self.updated_ports
                     self.updated_ports = set()
                     reg_ports = (set() if ovs_restarted else ports)
-                    port_info = self.scan_ports(reg_ports, updated_ports_copy)
+                    port_info = self.scan_ports(reg_ports, sync,
+                                                updated_ports_copy)
                     self.process_deleted_ports(port_info)
                     ofport_changed_ports = self.update_stale_ofport_rules()
                     if ofport_changed_ports:
@@ -1645,16 +1647,16 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                               "Elapsed:%(elapsed).3f",
                               {'iter_num': self.iter_num,
                                'elapsed': time.time() - start})
-
                     # Treat ancillary devices if they exist
                     if self.ancillary_brs:
                         ancillary_port_info = self.scan_ancillary_ports(
-                            ancillary_ports)
+                            ancillary_ports, sync)
                         LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
                                   "ancillary port info retrieved. "
                                   "Elapsed:%(elapsed).3f",
                                   {'iter_num': self.iter_num,
                                    'elapsed': time.time() - start})
+                    sync = False
                     # Secure and wire/unwire VIFs and update their status
                     # on Neutron server
                     if (self._port_info_has_changes(port_info) or
