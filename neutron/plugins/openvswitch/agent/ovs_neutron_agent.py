@@ -117,7 +117,8 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     #   1.0 Initial version
     #   1.1 Support Security Group RPC
     #   1.2 Support DVR (Distributed Virtual Router) RPC
-    target = oslo_messaging.Target(version='1.2')
+    #   1.3 Add updated_attrs to port_update
+    target = oslo_messaging.Target(version='1.3')
 
     def __init__(self, integ_br, tun_br, local_ip,
                  bridge_mappings, polling_interval, tunnel_types=None,
@@ -127,7 +128,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                  ovsdb_monitor_respawn_interval=(
                      constants.DEFAULT_OVSDBMON_RESPAWN),
                  arp_responder=False,
-                 prevent_arp_spoofing=True,
                  use_veth_interconnection=False,
                  quitting_rpc_timeout=None):
         '''Constructor.
@@ -333,8 +333,17 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         # Even if full port details might be provided to this call,
         # they are not used since there is no guarantee the notifications
         # are processed in the same order as the relevant API requests
-        self.updated_ports.add(port['id'])
-        LOG.debug("port_update message processed for port %s", port['id'])
+        updated_attrs = kwargs.get('updated_attrs')
+        if updated_attrs:
+            if 'port_binding' in updated_attrs or 'admin_state' in updated_attrs:
+                self.updated_ports.add(port['id'])
+            elif ('security-group' or 'address_pairs' or 'port_security'
+                  or 'security_group_member' in updated_attrs):
+                self.sg_agent.devices_to_refilter.append(port['id'])
+        else:
+            LOG.debug("port_update message processed for port %s but attribute"
+                      " updated doesn't require to be processed by the agent",
+                      port['id'])
 
     def port_delete(self, context, **kwargs):
         port_id = kwargs.get('port_id')
