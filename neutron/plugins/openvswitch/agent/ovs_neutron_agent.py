@@ -117,7 +117,8 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     #   1.0 Initial version
     #   1.1 Support Security Group RPC
     #   1.2 Support DVR (Distributed Virtual Router) RPC
-    target = oslo_messaging.Target(version='1.2')
+    #   1.3 Add updated_attrs to port_update
+    target = oslo_messaging.Target(version='1.3')
 
     def __init__(self, integ_br, tun_br, local_ip,
                  bridge_mappings, polling_interval, tunnel_types=None,
@@ -329,12 +330,27 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
 
     def port_update(self, context, **kwargs):
         port = kwargs.get('port')
-        # Put the port identifier in the updated_ports set.
         # Even if full port details might be provided to this call,
         # they are not used since there is no guarantee the notifications
         # are processed in the same order as the relevant API requests
-        self.updated_ports.add(port['id'])
-        LOG.debug("port_update message processed for port %s", port['id'])
+        updated_attrs = kwargs.get('updated_attrs')
+        full_update_attrs = ['port_binding', 'admin_state']
+        reload_filter_attrs = ['security-group', 'address_pairs',
+                               'port_security' 'security_group_member']
+        if updated_attrs:
+            if any(attr in updated_attrs for attr in full_update_attrs):
+                self.updated_ports.add(port['id'])
+                LOG.debug("port_update message processed for port %s,"
+                          " the agent will reprocess the port",
+                          port['id'])
+            elif any(attr in updated_attrs for attr in reload_filter_attrs):
+                self.sg_agent.devices_to_refilter.add(port['id'])
+                LOG.debug("port_update message processed for port %s,"
+                          " reload firewall rules",
+                          port['id'])
+        else:
+            self.updated_ports.add(port['id'])
+            LOG.debug("port_update message processed for port %s", port['id'])
 
     def port_delete(self, context, **kwargs):
         port_id = kwargs.get('port_id')

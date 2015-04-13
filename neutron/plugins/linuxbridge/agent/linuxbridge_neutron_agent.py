@@ -637,7 +637,8 @@ class LinuxBridgeRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     # Set RPC API version to 1.0 by default.
     # history
     #   1.1 Support Security Group RPC
-    target = oslo_messaging.Target(version='1.1')
+    #   1.3 Add updated_attrs to port_update
+    target = oslo_messaging.Target(version='1.3')
 
     def __init__(self, context, agent, sg_agent):
         super(LinuxBridgeRpcCallbacks, self).__init__()

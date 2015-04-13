@@ -219,11 +219,12 @@ class RpcApiTestCase(base.BaseTestCase):
                 topics.get_topic_name(topics.AGENT,
                                       topics.PORT,
                                       topics.UPDATE),
-                'port_update', rpc_method='cast',
+                'port_update', rpc_method='cast', version='1.3',
                 fanout=True, port='fake_port',
                 network_type='fake_network_type',
                 segmentation_id='fake_segmentation_id',
-                physical_network='fake_physical_network')
+                physical_network='fake_physical_network',
+                updated_attrs=None)
 
     def test_port_delete(self):
         rpcapi = plugin_rpc.AgentNotifierApi(topics.AGENT)

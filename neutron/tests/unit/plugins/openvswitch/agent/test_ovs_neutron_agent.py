@@ -511,16 +511,39 @@ class TestOvsNeutronAgent(base.BaseTestCase):
             self.assertFalse(clean_tun_fn.called)
             recl_fn.assert_called_with("123")
 
-    def test_port_update(self):
+    def _test_port_update(self, updated_attrs):
         port = {"id": "123",
-                "network_id": "124",
-                "admin_state_up": False}
+                "network_id": "124"}
         self.agent.port_update("unused_context",
                                port=port,
                                network_type="vlan",
                                segmentation_id="1",
-                               physical_network="physnet")
+                               physical_network="physnet",
+                               updated_attrs=updated_attrs)
         self.assertEqual(set(['123']), self.agent.updated_ports)
+
+    def test_port_full_update(self):
+        for attr in ['port_binding', 'admin_state', None]:
+            self._test_port_update(attr)
+
+    def _test_port_update_filter(self, updated_attrs):
+        port = {"id": "123",
+                "network_id": "124"}
+        with mock.patch.object(
+                self.agent.sg_agent.devices_to_refilter, 'add') as f:
+        self.agent.port_update("unused_context",
+                               port=port,
+                               network_type="vlan",
+                               segmentation_id="1",
+                               physical_network="physnet",
+                               updated_attrs=updated_attrs)
+        self.assertEqual(set(), self.agent.updated_ports)
+        f.assert_called_with("123")
+
+    def test_port_update_only_reapply_filters(self):
+        for attr in ['security-group', 'address_pairs',
+                     'port_security' 'security_group_member']:
+            self._test_port_update_filter(attr)
 
     def test_port_delete(self):
         port_id = "123"
