@@ -211,6 +211,7 @@ class AgentNotifierApi(dvr_rpc.DVRAgentRpcApiMixin,
         1.0 - Initial version.
         1.1 - Added get_active_networks_info, create_dhcp_port,
               update_dhcp_port, and removed get_dhcp_port methods.
+        1.4 - Added updated_attrs to port_update
 
     """
 
@@ -235,12 +236,17 @@ class AgentNotifierApi(dvr_rpc.DVRAgentRpcApiMixin,
         cctxt.cast(context, 'network_delete', network_id=network_id)
 
     def port_update(self, context, port, network_type, segmentation_id,
-                    physical_network):
+                    physical_network, updated_attrs=None):
+        # NOTE(rossella_s) the minimum version required is not
+        # increased because older server will simply ignore
+        # updated_attrs
         cctxt = self.client.prepare(topic=self.topic_port_update,
                                     fanout=True)
         cctxt.cast(context, 'port_update', port=port,
-                   network_type=network_type, segmentation_id=segmentation_id,
-                   physical_network=physical_network)
+                   network_type=network_type,
+                   segmentation_id=segmentation_id,
+                   physical_network=physical_network,
+                   updated_attrs=updated_attrs)
 
     def port_delete(self, context, port_id):
         cctxt = self.client.prepare(topic=self.topic_port_delete,

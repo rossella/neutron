@@ -40,6 +40,9 @@ from neutron.common import exceptions
 from neutron.common import topics
 from neutron.common import utils as n_utils
 from neutron import context
+from neutron.extensions import allowedaddresspairs as addr_pair
+from neutron.extensions import portsecurity as psec
+from neutron.extensions import securitygroup as ext_sg
 from neutron.i18n import _LE, _LI, _LW
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.ml2.drivers.l2pop.rpc_manager import l2population_rpc
@@ -127,7 +130,8 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     #   1.1 Support Security Group RPC
     #   1.2 Support DVR (Distributed Virtual Router) RPC
     #   1.3 Added param devices_to_update to security_groups_provider_updated
-    target = oslo_messaging.Target(version='1.3')
+    #   1.4 Add updated_attrs to port_update
+    target = oslo_messaging.Target(version='1.4')
 
     def __init__(self, bridge_classes, integ_br, tun_br, local_ip,
                  bridge_mappings, polling_interval, tunnel_types=None,
@@ -371,12 +375,26 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
 
     def port_update(self, context, **kwargs):
         port = kwargs.get('port')
-        # Put the port identifier in the updated_ports set.
         # Even if full port details might be provided to this call,
         # they are not used since there is no guarantee the notifications
         # are processed in the same order as the relevant API requests
-        self.updated_ports.add(port['id'])
-        LOG.debug("port_update message processed for port %s", port['id'])
+        updated_attrs = kwargs.get('updated_attrs')
+        full_update_attrs = set(['port_binding', 'admin_state'])
+
+        if updated_attrs:
+            if updated_attrs & full_update_attrs:
+                self.updated_ports.add(port['id'])
+                LOG.debug("port_update message processed for port %s,"
+                          " the agent will reprocess the port",
+                          port['id'])
+            else:
+                self.sg_agent.devices_to_refilter.add(port['id'])
+                LOG.debug("port_update message processed for port %s,"
+                          " reload firewall rules",
+                          port['id'])
+        else:
+            self.updated_ports.add(port['id'])
+            LOG.debug("port_update message processed for port %s", port['id'])
 
     def port_delete(self, context, **kwargs):
         port_id = kwargs.get('port_id')

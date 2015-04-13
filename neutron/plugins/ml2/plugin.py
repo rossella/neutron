@@ -62,6 +62,7 @@ from neutron.extensions import extra_dhcp_opt as edo_ext
 from neutron.extensions import portbindings
 from neutron.extensions import portsecurity as psec
 from neutron.extensions import providernet as provider
+from neutron.extensions import securitygroup as ext_sg
 from neutron.extensions import vlantransparent
 from neutron.i18n import _LE, _LI, _LW
 from neutron import manager
@@ -249,9 +250,10 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         return changes
 
     def _bind_port_if_needed(self, context, allow_notify=False,
-                             need_notify=False):
+                             updated_attrs=None):
         plugin_context = context._plugin_context
         port_id = context.current['id']
+        need_notify = bool(updated_attrs)
 
         # Since the mechanism driver bind_port() calls must be made
         # outside a DB transaction locking the port state, it is
@@ -273,7 +275,7 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
                 # We either don't need to bind the port, or can't, so
                 # notify if needed and return.
                 if allow_notify and need_notify:
-                    self._notify_port_updated(context)
+                    self._notify_port_updated(context, updated_attrs)
                 return context
 
             # Limit binding attempts to avoid any possibility of
@@ -514,7 +516,7 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         None,
         '_ml2_port_result_filter_hook')
 
-    def _notify_port_updated(self, mech_context):
+    def _notify_port_updated(self, mech_context, updated_attrs):
         port = mech_context.current
         segment = mech_context.bottom_bound_segment
         if not segment:
@@ -528,7 +530,8 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         self.notifier.port_update(mech_context._plugin_context, port,
                                   segment[api.NETWORK_TYPE],
                                   segment[api.SEGMENTATION_ID],
-                                  segment[api.PHYSICAL_NETWORK])
+                                  segment[api.PHYSICAL_NETWORK],
+                                  updated_attrs)
 
     def _delete_objects(self, context, resource, objects):
         delete_op = getattr(self, 'delete_%s' % resource)
@@ -1087,7 +1090,7 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
 
     def update_port(self, context, id, port):
         attrs = port[attributes.PORT]
-        need_port_update_notify = False
+        updated_attrs = set()
         session = context.session
         bound_mech_contexts = []
 
@@ -1097,7 +1100,8 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
                 raise exc.PortNotFound(port_id=id)
             mac_address_updated = self._check_mac_update_allowed(
                 port_db, attrs, binding)
-            need_port_update_notify |= mac_address_updated
+            if mac_address_updated:
+                updated_attrs.add('mac')
             original_port = self._make_port_dict(port_db)
             updated_port = super(Ml2Plugin, self).update_port(context, id,
                                                               port)
@@ -1109,18 +1113,22 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
             if (psec.PORTSECURITY in attrs) and (
                         original_port[psec.PORTSECURITY] !=
                         updated_port[psec.PORTSECURITY]):
-                need_port_update_notify = True
+                updated_attrs.add(psec.PORTSECURITY)
 
             if addr_pair.ADDRESS_PAIRS in attrs:
-                need_port_update_notify |= (
-                    self.update_address_pairs_on_port(context, id, port,
-                                                      original_port,
-                                                      updated_port))
-            need_port_update_notify |= self.update_security_group_on_port(
-                context, id, port, original_port, updated_port)
+                if self.update_address_pairs_on_port(context, id, port,
+                                                     original_port,
+                                                     updated_port):
+                    updated_attrs.add(addr_pair.ADDRESS_PAIRS)
+            if self.update_security_group_on_port(context, id, port,
+                                                  original_port,
+                                                  updated_port):
+                updated_attrs.add(ext_sg.SECURITYGROUPS)
+
             network = self.get_network(context, original_port['network_id'])
-            need_port_update_notify |= self._update_extra_dhcp_opts_on_port(
-                context, id, port, updated_port)
+            if self._update_extra_dhcp_opts_on_port(
+                context, id, port, updated_port):
+                updated_attrs.add(edo_ext.EXTRADHCPOPTS)
             levels = db.get_binding_levels(session, id, binding.host)
             mech_context = driver_context.PortContext(
                 self, context, updated_port, network, binding, levels,
@@ -1153,8 +1161,9 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
 
             new_host_port = self._get_host_port_if_changed(
                 mech_context, attrs)
-            need_port_update_notify |= self._process_port_binding(
-                mech_context, attrs)
+            if self._process_port_binding(mech_context, attrs):
+                updated_attrs.add('port_binding')
+
         # Notifications must be sent after the above transaction is complete
         kwargs = {
             'context': context,
@@ -1178,11 +1187,12 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         self.check_and_notify_security_group_member_changed(
             context, original_port, updated_port)
-        need_port_update_notify |= self.is_security_group_member_updated(
-            context, original_port, updated_port)
+        if self.is_security_group_member_updated(
+            context, original_port, updated_port):
+            updated_attrs.add('security_group_member')
 
         if original_port['admin_state_up'] != updated_port['admin_state_up']:
-            need_port_update_notify = True
+            updated_attrs.add('admin_state')
         # NOTE: In the case of DVR ports, the port-binding is done after
         # router scheduling when sync_routers is callede and so this call
         # below may not be required for DVR routed interfaces. But still
@@ -1193,7 +1203,7 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         bound_context = self._bind_port_if_needed(
             mech_context,
             allow_notify=True,
-            need_notify=need_port_update_notify)
+            updated_attrs=updated_attrs)
         return bound_context.current
 
     def _process_dvr_port_binding(self, mech_context, context, attrs):

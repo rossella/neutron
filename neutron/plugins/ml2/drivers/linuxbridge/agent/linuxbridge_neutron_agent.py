@@ -647,7 +647,8 @@ class LinuxBridgeRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     # history
     #   1.1 Support Security Group RPC
     #   1.3 Added param devices_to_update to security_groups_provider_updated
-    target = oslo_messaging.Target(version='1.3')
+    #   1.4 Add updated_attrs to port_update
+    target = oslo_messaging.Target(version='1.4')
 
     def __init__(self, context, agent, sg_agent):
         super(LinuxBridgeRpcCallbacks, self).__init__()
@@ -665,12 +666,27 @@ class LinuxBridgeRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
     def port_update(self, context, **kwargs):
         port_id = kwargs['port']['id']
         tap_name = self.agent.br_mgr.get_tap_device_name(port_id)
+        updated_attrs = kwargs.get('updated_attrs')
+        full_update_attrs = set(['port_binding', 'admin_state'])
+
         # Put the tap name in the updated_devices set.
         # Do not store port details, as if they're used for processing
         # notifications there is no guarantee the notifications are
         # processed in the same order as the relevant API requests.
-        self.agent.updated_devices.add(tap_name)
-        LOG.debug("port_update RPC received for port: %s", port_id)
+        if updated_attrs:
+            if updated_attrs & full_update_attrs:
+                self.agent.updated_devices.add(tap_name)
+                LOG.debug("port_update message processed for port %s,"
+                          " the agent will reprocess the port",
+                          port_id)
+            else:
+                self.sg_agent.devices_to_refilter.add(tap_name)
+                LOG.debug("port_update message processed for port %s,"
+                          " reload firewall rules",
+                          port_id)
+        else:
+            self.agent.updated_devices.add(tap_name)
+            LOG.debug("port_update RPC received for port: %s", port_id)
 
     def fdb_add(self, context, fdb_entries):
         LOG.debug("fdb_add received")

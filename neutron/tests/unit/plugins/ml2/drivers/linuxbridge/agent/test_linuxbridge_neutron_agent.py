@@ -21,6 +21,9 @@ from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.common import constants
 from neutron.common import exceptions
+from neutron.extensions import allowedaddresspairs as addr_pair
+from neutron.extensions import portsecurity as psec
+from neutron.extensions import securitygroup as ext_sg
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.ml2.drivers.linuxbridge.agent.common \
     import constants as lconst
@@ -346,6 +349,38 @@ class TestLinuxBridgeAgent(base.BaseTestCase):
         with mock.patch.object(self.agent, 'set_rpc_timeout') as mock_set_rpc:
             self.agent.stop()
             self.assertFalse(mock_set_rpc.called)
+
+    def _test_port_update(self, updated_attrs):
+        port = {"id": "123",
+                "network_id": "124"}
+        self.agent.endpoints[0].port_update("unused_context",
+                               port=port,
+                               network_type="vlan",
+                               segmentation_id="1",
+                               physical_network="physnet",
+                               updated_attrs=updated_attrs)
+        self.assertEqual(set(['tap123']), self.agent.updated_devices)
+
+    def test_port_full_update(self):
+        for attr in ['port_binding', 'admin_state', None]:
+            self._test_port_update(set([attr]))
+
+    def _test_port_update_filter(self, updated_attrs):
+        port = {"id": "123",
+                "network_id": "124"}
+        self.agent.endpoints[0].port_update("unused_context",
+                               port=port,
+                               network_type="vlan",
+                               segmentation_id="1",
+                               physical_network="physnet",
+                               updated_attrs=updated_attrs)
+        self.assertEqual(set(), self.agent.updated_devices)
+        self.assertIn("tap123", self.agent.sg_agent.devices_to_refilter)
+
+    def test_port_update_only_reapply_filters(self):
+        for attr in [ext_sg.SECURITYGROUPS, addr_pair.ADDRESS_PAIRS,
+                     psec.PORTSECURITY, 'security_group_member']:
+            self._test_port_update_filter(set([attr]))
 
 
 class TestLinuxBridgeManager(base.BaseTestCase):

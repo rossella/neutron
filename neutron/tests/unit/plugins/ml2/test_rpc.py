@@ -240,7 +240,8 @@ class RpcApiTestCase(base.BaseTestCase):
                 fanout=True, port='fake_port',
                 network_type='fake_network_type',
                 segmentation_id='fake_segmentation_id',
-                physical_network='fake_physical_network')
+                physical_network='fake_physical_network',
+                updated_attrs=None)
 
     def test_port_delete(self):
         rpcapi = plugin_rpc.AgentNotifierApi(topics.AGENT)

@@ -157,7 +157,7 @@ class PortBindingTestCase(test_plugin.NeutronDbPluginV2TestCase):
                 else:
                     self.assertEqual(port_data[portbindings.HOST_ID], host)
                 if new_host is not None and new_host != host:
-                    notify_mock.assert_called_once_with(mock.ANY)
+                    notify_mock.assert_called_once_with(mock.ANY, mock.ANY)
                 else:
                     self.assertFalse(notify_mock.called)
 
