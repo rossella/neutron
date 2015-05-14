@@ -22,6 +22,7 @@ from oslo_config import cfg
 from oslo_log import log
 
 from neutron.agent.common import ovs_lib
+from neutron.agent.common import polling
 from neutron.agent.linux import ip_lib
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.openvswitch.agent import ovs_neutron_agent
@@ -508,13 +509,19 @@ class TunnelTest(base.BaseTestCase):
         self._verify_mock_calls()
 
     def test_daemon_loop(self):
-        reply2 = {'current': set(['tap0']),
-                  'added': set(['tap2']),
+        reply2 = {'added': set(['tap0']),
                   'removed': set([])}
 
-        reply3 = {'current': set(['tap2']),
-                  'added': set([]),
+        reply3 = {'added': set([]),
                   'removed': set(['tap0'])}
+
+        reply_pe_1 = {'current': set([]),
+                      'added': set(['tap0']),
+                      'removed': set([])}
+
+        reply_pe_2 = {'current': set([]),
+                      'added': set([]),
+                      'removed': set(['tap0'])}
 
         self.mock_int_bridge_expected += [
             mock.call.dump_flows_for_table(constants.CANARY_TABLE),
@@ -524,7 +531,7 @@ class TunnelTest(base.BaseTestCase):
         with contextlib.nested(
             mock.patch.object(log.KeywordArgumentAdapter, 'exception'),
             mock.patch.object(ovs_neutron_agent.OVSNeutronAgent,
-                              'scan_ports'),
+                              'process_ports_events'),
             mock.patch.object(ovs_neutron_agent.OVSNeutronAgent,
                               'process_network_ports'),
             mock.patch.object(ovs_neutron_agent.OVSNeutronAgent,
@@ -532,11 +539,13 @@ class TunnelTest(base.BaseTestCase):
             mock.patch.object(time, 'sleep'),
             mock.patch.object(ovs_neutron_agent.OVSNeutronAgent,
                               'update_stale_ofport_rules')
-        ) as (log_exception, scan_ports, process_network_ports,
-              ts, time_sleep, update_stale):
+        ) as (log_exception, process_ports_events,
+              process_network_ports, ts, time_sleep, update_stale):
             log_exception.side_effect = Exception(
                 'Fake exception to get out of the loop')
-            scan_ports.side_effect = [reply2, reply3]
+            process_ports_events.side_effect = [reply_pe_1, reply_pe_2]
+            interface_polling = mock.Mock()
+            interface_polling.get_events.side_effect = [reply2, reply3]
             process_network_ports.side_effect = [
                 False, Exception('Fake exception to get out of the loop')]
 
@@ -546,22 +555,23 @@ class TunnelTest(base.BaseTestCase):
             # We start method and expect it will raise after 2nd loop
             # If something goes wrong, assert_has_calls below will catch it
             try:
-                q_agent.daemon_loop()
+                import pdb; pdb.set_trace()  # XXX BREAKPOINT
+                q_agent.rpc_loop(interface_polling)
             except Exception:
                 pass
 
         # FIXME(salv-orlando): There should not be assertions on log messages
         log_exception.assert_called_once_with(
             "Error while processing VIF ports")
-        scan_ports.assert_has_calls([
-            mock.call(set(), set()),
-            mock.call(set(['tap0']), set())
+        process_ports_events.assert_has_calls([
+            mock.call(reply2, set(), set()),
+            mock.call(reply3, set(['tap0']), set())
         ])
         process_network_ports.assert_has_calls([
-            mock.call({'current': set(['tap0']),
+            mock.call({'current': set([]),
                        'removed': set([]),
-                       'added': set(['tap2'])}, False),
-            mock.call({'current': set(['tap2']),
+                       'added': set(['tap0'])}, False),
+            mock.call({'current': set([]),
                        'removed': set(['tap0']),
                        'added': set([])}, False)
         ])

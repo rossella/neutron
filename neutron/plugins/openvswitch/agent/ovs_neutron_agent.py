@@ -1654,21 +1654,17 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     # between these two statements, this will be thread-safe
                     updated_ports_copy = self.updated_ports
                     self.updated_ports = set()
-                    if (hasattr(polling_manager, 'get_events') and not sync):
+                    if sync:
+                        LOG.info(_LI("Agent out of sync with plugin!"))
+                        ports.clear()
+                        ancillary_ports.clear()
+                        sync = False
+                        port_info = self.scan_ports(reg_ports,
+                                                    updated_ports_copy)
+                    else:
                         events = polling_manager.get_events()
                         port_info = self.process_ports_events(
                             events, ports, updated_ports_copy)
-                    # there was a problem in syncing with the plugin, so
-                    # scan all the ports
-                    else:
-                        if sync:
-                            LOG.info(_LI("Agent out of sync with plugin!"))
-                            ports.clear()
-                            ancillary_ports.clear()
-                            sync = False
-                        reg_ports = (set() if ovs_restarted else ports)
-                        port_info = self.scan_ports(reg_ports,
-                                                    updated_ports_copy)
                     self.update_stale_ofport_rules()
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
                               "port information retrieved. "
