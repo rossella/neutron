@@ -526,6 +526,23 @@ class TestOvsNeutronAgent(object):
             self.assertEqual((['the_skipped_one'], []), skip_devs)
             self.assertFalse(treat_vif_port.called)
 
+    def test_treat_devices_added_failed_devices(self):
+        dev_mock = 'the_failed_one'
+        with mock.patch.object(self.agent.plugin_rpc,
+                               'get_devices_details_list_and_failed_devices',
+                               return_value={'devices': [],
+                                             'failed_devices': [dev_mock]}),\
+                mock.patch.object(self.agent.int_br,
+                                  'get_vifs_by_ids',
+                                  return_value={}),\
+                mock.patch.object(self.agent,
+                                  'treat_vif_port') as treat_vif_port:
+            skip_devs = self.agent.treat_devices_added_or_updated([{}], False)
+            # The function should return False for resync and no device
+            # processed
+            self.assertEqual(([dev_mock], []), skip_devs)
+            self.assertFalse(treat_vif_port.called)
+
     def test_treat_devices_added_updated_put_port_down(self):
         fake_details_dict = {'admin_state_up': False,
                              'port_id': 'xxx',
@@ -572,6 +589,20 @@ class TestOvsNeutronAgent(object):
     def test_treat_devices_removed_ignores_missing_port(self):
         self._mock_treat_devices_removed(False)
 
+    def test_treat_devices_removed_failed_devices(self):
+        dev_mock = 'the_failed_one'
+        with mock.patch.object(self.agent.plugin_rpc,
+                               'update_device_list',
+                               return_value={'devices_up': [],
+                                             'devices_down': [],
+                                             'failed_devices_up': [],
+                                             'failed_devices_down': [
+                                                 dev_mock]}):
+            skip_devs = self.agent.treat_devices_removed([{}])
+            # The function should return False for resync and no device
+            # processed
+            self.assertEqual([dev_mock], skip_devs)
+
     def test_bind_port_with_missing_network(self):
         self.agent._bind_devices([{'network_id': 'non-existent'}])
 
@@ -586,7 +617,7 @@ class TestOvsNeutronAgent(object):
                                   return_value=[]),\
                 mock.patch.object(self.agent,
                                   "treat_devices_removed",
-                                  return_value=False) as device_removed:
+                                  return_value=[]) as device_removed:
             self.assertFalse(self.agent.process_network_ports(port_info,
                                                               False))
             setup_port_filters.assert_called_once_with(
