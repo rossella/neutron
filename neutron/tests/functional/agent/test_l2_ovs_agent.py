@@ -223,7 +223,8 @@ class TestOVSAgent(OVSAgentTestFramework):
                 dev for args in call.call_args_list for dev in args[0][2]]
         return not (set(expected_devices) - set(rpc_devices))
 
-    def _create_ports(self, network, agent, trigger_resync=False):
+    def _create_ports(self, network, agent, trigger_resync=False,
+                      failed_dev_up=False, failed_dev_down=False):
         ports = []
         for x in range(3):
             ports.append(self._create_test_port_dict())
@@ -233,6 +234,34 @@ class TestOVSAgent(OVSAgentTestFramework):
             agent.plugin_rpc.update_device_list.side_effect = (
                 mock_update_device)
             raise Exception('Exception to trigger resync')
+
+        def mock_failed_devices_up(context, devices_up, devices_down,
+                                   agent_id, host=None):
+            agent.plugin_rpc.update_device_list.side_effect = (
+                mock_update_device)
+            failed_devices_up = [p['id'] for p in ports[:2]]
+            dev_up = [p['id'] for p in ports[len(ports) - 2:len(ports)]]
+            return {'devices_up': dev_up,
+                    'failed_devices_up': failed_devices_up,
+                    'devices_down': [],
+                    'failed_devices_down': []}
+
+        def mock_failed_devices_down(context, devices_up, devices_down,
+                                     agent_id, host=None):
+            failed_devices_down = []
+            # check if it's the call to set the devices down
+            if devices_down:
+                agent.plugin_rpc.update_device_list.side_effect = (
+                     mock_update_device)
+                failed_devices_down = [p['id'] for p in ports[:2]]
+            # first call to set devices up must succeed
+            dev_up = [p['id'] for p in ports]
+            dev_down = [
+                p['id'] for p in ports if p not in failed_devices_down]
+            return {'devices_up': dev_up,
+                    'failed_devices_up': [],
+                    'devices_down': dev_down,
+                    'failed_devices_down': failed_devices_down}
 
         def mock_device_details(context, devices, agent_id, host=None):
 
@@ -263,16 +292,23 @@ class TestOVSAgent(OVSAgentTestFramework):
         if trigger_resync:
             agent.plugin_rpc.update_device_list.side_effect = (
                  mock_device_raise_exception)
+        elif failed_dev_up:
+            agent.plugin_rpc.update_device_list.side_effect = (
+                mock_failed_devices_up)
+        elif failed_dev_down:
+            agent.plugin_rpc.update_device_list.side_effect = (
+                mock_failed_devices_down)
         else:
             agent.plugin_rpc.update_device_list.side_effect = (
                 mock_update_device)
         return ports
 
-    def test_port_creation_and_deletion(self):
+    def _test_port_creation_and_deletion(self, failed_dev_down=False):
         agent = self.create_agent()
         self.start_agent(agent)
         network = self._create_test_network_dict()
-        ports = self._create_ports(network, agent)
+        ports = self._create_ports(network, agent,
+                                   failed_dev_down=failed_dev_down)
         self._plug_ports(network, ports, agent)
         up_ports_ids = [p['id'] for p in ports]
         agent_utils.wait_until_true(
@@ -285,16 +321,29 @@ class TestOVSAgent(OVSAgentTestFramework):
             lambda: self._expected_plugin_rpc_call(
                 agent.plugin_rpc.update_device_list, down_ports_ids, False))
 
-    def test_resync_devices_set_up_after_exception(self):
+    def test_port_creation_and_deletion(self):
+        self._test_port_creation_and_deletion()
+
+    def _test_failure_set_devices_up(self, trigger_resync, failed_dev_up):
         agent = self.create_agent()
         self.start_agent(agent)
         network = self._create_test_network_dict()
-        ports = self._create_ports(network, agent, True)
+        ports = self._create_ports(network, agent, trigger_resync,
+                                   failed_dev_up)
         self._plug_ports(network, ports, agent)
         ports_ids = [p['id'] for p in ports]
         agent_utils.wait_until_true(
             lambda: self._expected_plugin_rpc_call(
                 agent.plugin_rpc.update_device_list, ports_ids))
+
+    def test_resync_devices_set_up_after_exception(self):
+        self._test_failure_set_devices_up(True, False)
+
+    def test_device_set_up_fails(self):
+        self._test_failure_set_devices_up(False, True)
+
+    def test_device_set_down_fails(self):
+        self._test_port_creation_and_deletion(True)
 
     def test_port_vlan_tags(self):
         agent = self.create_agent()

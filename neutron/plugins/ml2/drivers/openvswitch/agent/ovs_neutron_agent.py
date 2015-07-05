@@ -1258,9 +1258,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 self.agent_id,
                 self.conf.host))
         if devices_details_list.get('failed_devices'):
-            #TODO(rossella_s) handle better the resync in next patches,
-            # this is just to preserve the current behavior
-            raise DeviceListRetrievalError(devices=devices)
+            skipped_devices.extend(devices_details_list.get('failed_devices'))
 
         devices = devices_details_list.get('devices')
         vif_by_id = self.int_br.get_vifs_by_ids(
@@ -1301,6 +1299,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         return skipped_devices, need_binding_devices
 
     def treat_ancillary_devices_added(self, devices):
+        failed_devices = []
         devices_details_list = (
             self.plugin_rpc.get_devices_details_list_and_failed_devices(
                 self.context,
@@ -1308,9 +1307,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 self.agent_id,
                 self.conf.host))
         if devices_details_list.get('failed_devices'):
-            #TODO(rossella_s) handle better the resync in next patches,
-            # this is just to preserve the current behavior
-            raise DeviceListRetrievalError(devices=devices)
+            failed_devices.extend(devices_details_list.get('failed_devices'))
         devices_added = [
             d['device'] for d in devices_details_list.get('devices')]
         LOG.info(_LI("Ancillary Ports %s added"), devices_added)
@@ -1323,12 +1320,10 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                                                self.agent_id,
                                                self.conf.host))
         if devices_set_up.get('failed_devices_up'):
-            #TODO(rossella_s) handle better the resync in next patches,
-            # this is just to preserve the current behavior
-            raise DeviceListRetrievalError()
+            failed_devices.extend(devices_set_up.get('failed_devices_up'))
+        return failed_devices
 
     def treat_devices_removed(self, devices):
-        resync = False
         self.sg_agent.remove_devices_filter(devices)
         LOG.info(_LI("Ports %s removed"), devices)
         devices_down = self.plugin_rpc.update_device_list(self.context,
@@ -1336,16 +1331,14 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                                                           devices,
                                                           self.agent_id,
                                                           self.conf.host)
-        failed_devices = devices_down.get('failed_devices_down')
+        failed_devices = devices_down.get('failed_devices_down', [])
         if failed_devices:
             LOG.debug("Port removal failed for %(devices)s ", failed_devices)
-            resync = True
         for device in devices:
             self.port_unbound(device)
-        return resync
+        return failed_devices
 
     def treat_ancillary_devices_removed(self, devices):
-        resync = False
         LOG.info(_LI("Ancillary ports %s removed"), devices)
         devices_down = self.plugin_rpc.update_device_list(self.context,
                                                           [],
@@ -1355,18 +1348,16 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         failed_devices = devices_down.get('failed_devices_down')
         if failed_devices:
             LOG.debug("Port removal failed for %(devices)s ", failed_devices)
-            resync = True
         for detail in devices_down.get('devices_down'):
             if detail['exists']:
                 LOG.info(_LI("Port %s updated."), detail['device'])
                 # Nothing to do regarding local networking
             else:
                 LOG.debug("Device %s not defined on plugin", detail['device'])
-        return resync
+        return failed_devices
 
     def process_network_ports(self, port_info, ovs_restarted):
-        resync_a = False
-        resync_b = False
+        resync = False
         # TODO(salv-orlando): consider a solution for ensuring notifications
         # are processed exactly in the same order in which they were
         # received. This is tricky because there are two notification
@@ -1406,7 +1397,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 LOG.exception(_LE("process_network_ports - iteration:%d - "
                                   "failure while retrieving port details "
                                   "from server"), self.iter_num)
-                resync_a = True
+                resync = True
 
         # TODO(salv-orlando): Optimize avoiding applying filters
         # unnecessarily, (eg: when there are no IP address changes)
@@ -1416,45 +1407,41 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
 
         if 'removed' in port_info and port_info['removed']:
             start = time.time()
-            resync_b = self.treat_devices_removed(port_info['removed'])
+            failed_removed_devices = self.treat_devices_removed(
+                port_info['removed'])
+            # failed devices need to be reprocessed
+            port_info['current'] |= set(failed_removed_devices)
             LOG.debug("process_network_ports - iteration:%(iter_num)d - "
                       "treat_devices_removed completed in %(elapsed).3f",
                       {'iter_num': self.iter_num,
                        'elapsed': time.time() - start})
         # If one of the above operations fails => resync with plugin
-        return (resync_a | resync_b)
+        return resync
 
     def process_ancillary_network_ports(self, port_info):
-        resync_a = False
-        resync_b = False
         if 'added' in port_info and port_info['added']:
             start = time.time()
-            try:
-                self.treat_ancillary_devices_added(port_info['added'])
-                LOG.debug("process_ancillary_network_ports - iteration: "
-                          "%(iter_num)d - treat_ancillary_devices_added "
-                          "completed in %(elapsed).3f",
-                          {'iter_num': self.iter_num,
-                           'elapsed': time.time() - start})
-            except DeviceListRetrievalError:
-                # Need to resync as there was an error with server
-                # communication.
-                LOG.exception(_LE("process_ancillary_network_ports - "
-                                  "iteration:%d - failure while retrieving "
-                                  "port details from server"), self.iter_num)
-                resync_a = True
+            failed_devices = self.treat_ancillary_devices_added(
+                port_info['added'])
+            LOG.debug("process_ancillary_network_ports - iteration: "
+                      "%(iter_num)d - treat_ancillary_devices_added "
+                      "completed in %(elapsed).3f",
+                      {'iter_num': self.iter_num,
+                       'elapsed': time.time() - start})
+            port_info['current'] = (port_info['current'] -
+                                    set(failed_devices))
+
         if 'removed' in port_info and port_info['removed']:
             start = time.time()
-            resync_b = self.treat_ancillary_devices_removed(
+            failed_devices = self.treat_ancillary_devices_removed(
                 port_info['removed'])
+            port_info['current'] |= set(failed_devices)
+
             LOG.debug("process_ancillary_network_ports - iteration: "
                       "%(iter_num)d - treat_ancillary_devices_removed "
                       "completed in %(elapsed).3f",
                       {'iter_num': self.iter_num,
                        'elapsed': time.time() - start})
-
-        # If one of the above operations fails => resync with plugin
-        return (resync_a | resync_b)
 
     def get_ip_in_hex(self, ip_address):
         try:
@@ -1645,7 +1632,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     ports = port_info['current']
 
                     if self.ancillary_brs:
-                        sync |= self.process_ancillary_network_ports(
+                        self.process_ancillary_network_ports(
                             ancillary_port_info)
                         LOG.debug("Agent rpc_loop - iteration: "
                                   "%(iter_num)d - ancillary ports "
