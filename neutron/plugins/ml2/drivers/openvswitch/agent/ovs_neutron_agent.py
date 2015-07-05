@@ -1591,6 +1591,9 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 ancillary_ports.clear()
                 sync = False
                 polling_manager.force_polling()
+
+    def handle_ovs_status(self, start):
+        while self._check_and_handle_signal:
             ovs_status = self.check_ovs_status()
             if ovs_status == constants.OVS_RESTARTED:
                 self.setup_integration_br()
@@ -1598,7 +1601,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 if self.enable_tunneling:
                     self.setup_tunnel_br()
                     self.setup_tunnel_br_flows()
-                    tunnel_sync = True
                 if self.enable_distributed_routing:
                     self.dvr_agent.reset_ovs_parameters(self.int_br,
                                                  self.tun_br,
@@ -1613,15 +1615,41 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 port_stats = self.get_port_stats({}, {})
                 self.loop_count_and_wait(start, port_stats)
                 continue
+            return ovs_status == constants.OVS_RESTARTED
+        # the agent was stopped
+        sys.exit(0)
+
+    def rpc_loop(self, polling_manager=None):
+        if not polling_manager:
+            polling_manager = polling.get_polling_manager(
+                minimize_polling=False)
+
+        sync = True
+        ports = set()
+        updated_ports_copy = set()
+        ancillary_ports = set()
+        tunnel_sync = True
+        ovs_restarted = False
+        while self._check_and_handle_signal():
+            start = time.time()
+            LOG.debug("Agent rpc_loop - iteration:%d started",
+                      self.iter_num)
+            if sync:
+                LOG.info(_LI("Agent out of sync with plugin!"))
+                ports.clear()
+                ancillary_ports.clear()
+                sync = False
+                polling_manager.force_polling()
+            ovs_restarted |= self.handle_ovs_status(start)
+
             # Notify the plugin of tunnel IP
-            if self.enable_tunneling and tunnel_sync:
+            if self.enable_tunneling and (tunnel_sync or ovs_restarted):
                 LOG.info(_LI("Agent tunnel out of sync with plugin!"))
                 try:
                     tunnel_sync = self.tunnel_sync()
                 except Exception:
                     LOG.exception(_LE("Error while synchronizing tunnels"))
                     tunnel_sync = True
-            ovs_restarted |= (ovs_status == constants.OVS_RESTARTED)
             if self._agent_has_updates(polling_manager) or ovs_restarted:
                 try:
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
