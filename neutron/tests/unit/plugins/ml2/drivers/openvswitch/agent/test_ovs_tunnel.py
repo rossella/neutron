@@ -527,8 +527,11 @@ class TunnelTest(object):
                 (reply_pe_1, reply_ancillary), (reply_pe_2, reply_ancillary)]
             interface_polling = mock.Mock()
             interface_polling.get_events.side_effect = [reply_ge_1, reply_ge_2]
+            failed_devices = {'removed': set([]), 'added': set([])}
+            failed_ancillary_devices = {'removed': set([]), 'added': set([])}
             process_network_ports.side_effect = [
-                False, Exception('Fake exception to get out of the loop')]
+                (False, failed_devices),
+                Exception('Fake exception to get out of the loop')]
 
             n_agent = self._build_agent()
 
@@ -545,8 +548,10 @@ class TunnelTest(object):
             log_exception.assert_called_once_with(
                 "Error while processing VIF ports")
             process_p_events.assert_has_calls([
-                mock.call(reply_ge_1, set(), None, set()),
-                mock.call(reply_ge_2, set(['tap0']), None, set())
+                mock.call(reply_ge_1, set(), set(), failed_devices,
+                          failed_ancillary_devices, set()),
+                mock.call(reply_ge_2, set(['tap0']), set(),
+                          failed_devices, failed_ancillary_devices, set())
             ])
             process_network_ports.assert_has_calls([
                 mock.call({'current': set(['tap0']),

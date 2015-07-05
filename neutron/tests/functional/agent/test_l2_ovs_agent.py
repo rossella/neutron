@@ -24,6 +24,7 @@ from oslo_utils import uuidutils
 
 from neutron.agent.common import config as agent_config
 from neutron.agent.common import ovs_lib
+from neutron.agent.l3 import agent as l3_agent
 from neutron.agent.linux import interface
 from neutron.agent.linux import polling
 from neutron.agent.linux import utils as agent_utils
@@ -42,6 +43,7 @@ from neutron.plugins.ml2.drivers.openvswitch.agent.openflow.ovs_ofctl \
     import br_tun
 from neutron.plugins.ml2.drivers.openvswitch.agent import ovs_neutron_agent \
     as ovs_agent
+from neutron.tests.common import net_helpers
 from neutron.tests.functional.agent.linux import base
 
 LOG = logging.getLogger(__name__)
@@ -145,7 +147,9 @@ class OVSAgentTestFramework(base.BaseOVSLinuxTestCase):
             devices.append(dev)
             agent._bind_devices(devices)
 
-    def _create_test_port_dict(self):
+    def _create_test_port_dict(self, is_ancillary):
+        dev_prefix = (l3_agent.EXTERNAL_DEV_PREFIX if is_ancillary
+                     else self.driver.DEV_NAME_PREFIX)
         return {'id': uuidutils.generate_uuid(),
                 'mac_address': utils.get_random_mac(
                     'fa:16:3e:00:00:00'.split(':')),
@@ -155,18 +159,20 @@ class OVSAgentTestFramework(base.BaseOVSLinuxTestCase):
                          random.randint(3, 254),
                          random.randint(3, 254))}],
                 'vif_name': base.get_rand_name(
-                    self.driver.DEV_NAME_LEN, self.driver.DEV_NAME_PREFIX)}
+                    self.driver.DEV_NAME_LEN, dev_prefix)}
 
     def _create_test_network_dict(self):
         return {'id': uuidutils.generate_uuid(),
                 'tenant_id': uuidutils.generate_uuid()}
 
-    def _plug_ports(self, network, ports, agent, ip_len=24):
+    def _plug_ports(self, network, ports, agent, ip_len=24,
+                    bridge=None):
         for port in ports:
+            bridge = bridge or agent.int_br.br_name
             self.driver.plug(
                 network.get('id'), port.get('id'), port.get('vif_name'),
                 port.get('mac_address'),
-                agent.int_br.br_name, namespace=None)
+                bridge, namespace=None)
             ip_cidrs = ["%s/%s" % (port.get('fixed_ips')[0][
                 'ip_address'], ip_len)]
             self.driver.init_l3(port.get('vif_name'), ip_cidrs, namespace=None)
@@ -223,18 +229,60 @@ class TestOVSAgent(OVSAgentTestFramework):
         else:
             rpc_devices = [
                 dev for args in call.call_args_list for dev in args[0][2]]
-        return not (set(expected_devices) - set(rpc_devices))
+        for dev in rpc_devices:
+            if dev in expected_devices:
+                expected_devices.remove(dev)
+        return not expected_devices
 
-    def _create_ports(self, network, agent, trigger_resync=False):
+    def _create_ports(self, network, agent, trigger_resync=False,
+                      failed_dev_up=False, failed_dev_down=False,
+                      is_ancillary=False):
         ports = []
+        failed_port = None
         for x in range(3):
-            ports.append(self._create_test_port_dict())
+            ports.append(self._create_test_port_dict(is_ancillary))
+
+        failed_port = ports[1]
 
         def mock_device_raise_exception(context, devices_up, devices_down,
                                         agent_id, host=None):
             agent.plugin_rpc.update_device_list.side_effect = (
                 mock_update_device)
             raise Exception('Exception to trigger resync')
+
+        def mock_failed_devices_up(context, devices_up, devices_down,
+                                   agent_id, host=None):
+            failed_devices = []
+            devices = list(devices_up)
+            if failed_port['id'] in devices_up:
+                # reassign side_effect so that next RPC call will succeed
+                agent.plugin_rpc.update_device_list.side_effect = (
+                    mock_update_device)
+                devices.remove(failed_port['id'])
+                failed_devices.append(failed_port['id'])
+            return {'devices_up': devices,
+                    'failed_devices_up': failed_devices,
+                    'devices_down': [],
+                    'failed_devices_down': []}
+
+        def mock_failed_devices_down(context, devices_up, devices_down,
+                                     agent_id, host=None):
+            failed_devices_down = []
+            dev_down = [
+                {'device': p['id'], 'exists': True}
+                for p in ports if p['id'] in devices_down and (
+                    p['id'] != failed_port['id'])]
+            # check if it's the call to set devices down and if the device
+            # that is supposed to fail is in the call then modify the
+            # side_effect so that next RPC call will succeed.
+            if devices_down and failed_port['id'] in devices_down:
+                agent.plugin_rpc.update_device_list.side_effect = (
+                     mock_update_device)
+                failed_devices_down.append(failed_port['id'])
+            return {'devices_up': devices_up,
+                    'failed_devices_up': [],
+                    'devices_down': dev_down,
+                    'failed_devices_down': failed_devices_down}
 
         def mock_device_details(context, devices, agent_id, host=None):
 
@@ -265,44 +313,106 @@ class TestOVSAgent(OVSAgentTestFramework):
         if trigger_resync:
             agent.plugin_rpc.update_device_list.side_effect = (
                  mock_device_raise_exception)
+        elif failed_dev_up:
+            agent.plugin_rpc.update_device_list.side_effect = (
+                mock_failed_devices_up)
+        elif failed_dev_down:
+            agent.plugin_rpc.update_device_list.side_effect = (
+                mock_failed_devices_down)
         else:
             agent.plugin_rpc.update_device_list.side_effect = (
                 mock_update_device)
-        return ports
+        return (ports, failed_port)
 
-    def test_port_creation_and_deletion(self):
+    def _test_port_creation_and_deletion(self, trigger_resync=False,
+                                         failed_dev_down=False,
+                                         failed_dev_up=False):
         agent = self.create_agent()
         self.start_agent(agent)
         network = self._create_test_network_dict()
-        ports = self._create_ports(network, agent)
+        (ports, failed_port) = self._create_ports(
+            network, agent, trigger_resync=trigger_resync,
+            failed_dev_up=failed_dev_up,
+            failed_dev_down=failed_dev_down)
         self._plug_ports(network, ports, agent)
         up_ports_ids = [p['id'] for p in ports]
+        # if a device will fail we expect the RPC call for
+        # that device to be executed again
+        if failed_dev_up:
+            up_ports_ids.append(failed_port['id'])
+        elif trigger_resync:
+            up_ports_ids.extend(up_ports_ids)
         agent_utils.wait_until_true(
             lambda: self._expected_plugin_rpc_call(
                 agent.plugin_rpc.update_device_list, up_ports_ids))
         down_ports_ids = [p['id'] for p in ports]
         for port in ports:
             agent.int_br.delete_port(port['vif_name'])
+        if failed_dev_down:
+            down_ports_ids.append(failed_port['id'])
         agent_utils.wait_until_true(
             lambda: self._expected_plugin_rpc_call(
                 agent.plugin_rpc.update_device_list, down_ports_ids, False))
 
-    def test_resync_devices_set_up_after_exception(self):
+    def test_port_creation_and_deletion(self):
+        self._test_port_creation_and_deletion()
+
+    def test_resync_devices(self):
+        self._test_port_creation_and_deletion(trigger_resync=True)
+
+    def test_resync_dev_up_after_failure(self):
+        self._test_port_creation_and_deletion(failed_dev_up=True)
+
+    def test_resync_dev_down_after_failure(self):
+        self._test_port_creation_and_deletion(failed_dev_down=True)
+
+    def _test_ancillary_port_creation_and_deletion(
+            self, trigger_resync=False, failed_dev_down=False,
+            failed_dev_up=False):
+        external_bridge = self.useFixture(
+            net_helpers.OVSBridgeFixture()).bridge
         agent = self.create_agent()
+        agent.ancillary_brs = [external_bridge]
         self.start_agent(agent)
         network = self._create_test_network_dict()
-        ports = self._create_ports(network, agent, True)
-        self._plug_ports(network, ports, agent)
-        ports_ids = [p['id'] for p in ports]
+        (ports, failed_port) = self._create_ports(
+            network, agent, trigger_resync=trigger_resync,
+            failed_dev_up=failed_dev_up,
+            failed_dev_down=failed_dev_down,
+            is_ancillary=True)
+        self._plug_ports(network, ports, agent, bridge=external_bridge.br_name)
+        up_ports_ids = [p['id'] for p in ports]
+        if failed_dev_up:
+            up_ports_ids.append(failed_port['id'])
+        elif trigger_resync:
+            up_ports_ids.extend(up_ports_ids)
         agent_utils.wait_until_true(
             lambda: self._expected_plugin_rpc_call(
-                agent.plugin_rpc.update_device_list, ports_ids))
+                agent.plugin_rpc.update_device_list, up_ports_ids))
+
+        down_ports_ids = [p['id'] for p in ports]
+        for port in ports:
+            external_bridge.delete_port(port['vif_name'])
+        if failed_dev_down:
+            down_ports_ids.append(failed_port['id'])
+        agent_utils.wait_until_true(
+            lambda: self._expected_plugin_rpc_call(
+                agent.plugin_rpc.update_device_list, down_ports_ids, False))
+
+    def test_resync_ancillary_devices(self):
+        self._test_ancillary_port_creation_and_deletion(trigger_resync=True)
+
+    def test_resync_ancillary_dev_up_after_failure(self):
+        self._test_ancillary_port_creation_and_deletion(failed_dev_up=True)
+
+    def test_resync_ancillary_dev_down_after_failure(self):
+        self._test_ancillary_port_creation_and_deletion(failed_dev_down=True)
 
     def test_port_vlan_tags(self):
         agent = self.create_agent()
         self.start_agent(agent)
         network = self._create_test_network_dict()
-        ports = self._create_ports(network, agent)
+        (ports, _) = self._create_ports(network, agent)
         ports_ids = [p['id'] for p in ports]
         self._plug_ports(network, ports, agent)
         agent_utils.wait_until_true(
