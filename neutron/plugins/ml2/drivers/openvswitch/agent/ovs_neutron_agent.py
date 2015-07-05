@@ -1540,6 +1540,32 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 'removed': len(ancillary_port_info.get('removed', []))}
         return port_stats
 
+    def handle_ovs_status(self, start):
+        while self.run_daemon_loop:
+            ovs_status = self.check_ovs_status()
+            if ovs_status == constants.OVS_RESTARTED:
+                self.setup_integration_br()
+                self.setup_physical_bridges(self.bridge_mappings)
+                if self.enable_tunneling:
+                    self.reset_tunnel_br()
+                    self.setup_tunnel_br()
+                if self.enable_distributed_routing:
+                    self.dvr_agent.reset_ovs_parameters(self.int_br,
+                                                 self.tun_br,
+                                                 self.patch_int_ofport,
+                                                 self.patch_tun_ofport)
+                    self.dvr_agent.reset_dvr_parameters()
+                    self.dvr_agent.setup_dvr_flows()
+            elif ovs_status == constants.OVS_DEAD:
+                # Agent doesn't apply any operations when ovs is dead, to
+                # prevent unexpected failure or crash. Sleep and continue
+                # loop in which ovs status will be checked periodically.
+                port_stats = self.get_port_stats({}, {})
+                self.loop_count_and_wait(start, port_stats)
+                continue
+            return ovs_status == constants.OVS_RESTARTED
+
+
     def rpc_loop(self, polling_manager=None):
         if not polling_manager:
             polling_manager = polling.get_polling_manager(
@@ -1555,37 +1581,16 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
             start = time.time()
             LOG.debug("Agent rpc_loop - iteration:%d started",
                       self.iter_num)
-            ovs_status = self.check_ovs_status()
-            if ovs_status == constants.OVS_RESTARTED:
-                self.setup_integration_br()
-                self.setup_physical_bridges(self.bridge_mappings)
-                if self.enable_tunneling:
-                    self.reset_tunnel_br()
-                    self.setup_tunnel_br()
-                    tunnel_sync = True
-                if self.enable_distributed_routing:
-                    self.dvr_agent.reset_ovs_parameters(self.int_br,
-                                                 self.tun_br,
-                                                 self.patch_int_ofport,
-                                                 self.patch_tun_ofport)
-                    self.dvr_agent.reset_dvr_parameters()
-                    self.dvr_agent.setup_dvr_flows()
-            elif ovs_status == constants.OVS_DEAD:
-                # Agent doesn't apply any operations when ovs is dead, to
-                # prevent unexpected failure or crash. Sleep and continue
-                # loop in which ovs status will be checked periodically.
-                port_stats = self.get_port_stats({}, {})
-                self.loop_count_and_wait(start, port_stats)
-                continue
+            ovs_restarted |= self.handle_ovs_status(start)
+
             # Notify the plugin of tunnel IP
-            if self.enable_tunneling and tunnel_sync:
+            if self.enable_tunneling and tunnel_sync or ovs_restarted:
                 LOG.info(_LI("Agent tunnel out of sync with plugin!"))
                 try:
                     tunnel_sync = self.tunnel_sync()
                 except Exception:
                     LOG.exception(_LE("Error while synchronizing tunnels"))
                     tunnel_sync = True
-            ovs_restarted |= (ovs_status == constants.OVS_RESTARTED)
             if self._agent_has_updates(polling_manager) or sync:
                 try:
                     LOG.debug("Agent rpc_loop - iteration:%(iter_num)d - "
