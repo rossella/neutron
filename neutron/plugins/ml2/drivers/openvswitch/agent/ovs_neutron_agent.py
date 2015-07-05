@@ -1528,6 +1528,18 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                        'elapsed': elapsed})
         self.iter_num = self.iter_num + 1
 
+    def get_port_stats(self, port_info, ancillary_port_info):
+        port_stats = {
+            'regular': {
+                'added': len(port_info.get('added', [])),
+                'updated': len(port_info.get('updated', [])),
+                'removed': len(port_info.get('removed', []))}}
+        if self.ancillary_brs:
+            port_stats['ancillary'] = {
+                'added': len(ancillary_port_info.get('added', [])),
+                'removed': len(ancillary_port_info.get('removed', []))}
+        return port_stats
+
     def rpc_loop(self, polling_manager=None):
         if not polling_manager:
             polling_manager = polling.get_polling_manager(
@@ -1541,11 +1553,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         ovs_restarted = False
         while self.run_daemon_loop:
             start = time.time()
-            port_stats = {'regular': {'added': 0,
-                                      'updated': 0,
-                                      'removed': 0},
-                          'ancillary': {'added': 0,
-                                        'removed': 0}}
             LOG.debug("Agent rpc_loop - iteration:%d started",
                       self.iter_num)
             ovs_status = self.check_ovs_status()
@@ -1567,6 +1574,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                 # Agent doesn't apply any operations when ovs is dead, to
                 # prevent unexpected failure or crash. Sleep and continue
                 # loop in which ovs status will be checked periodically.
+                port_stats = self.get_port_stats({}, {})
                 self.loop_count_and_wait(start, port_stats)
                 continue
             # Notify the plugin of tunnel IP
@@ -1636,12 +1644,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                                   "ports processed. Elapsed:%(elapsed).3f",
                                   {'iter_num': self.iter_num,
                                    'elapsed': time.time() - start})
-                        port_stats['regular']['added'] = (
-                            len(port_info.get('added', [])))
-                        port_stats['regular']['updated'] = (
-                            len(port_info.get('updated', [])))
-                        port_stats['regular']['removed'] = (
-                            len(port_info.get('removed', [])))
+
                     ports = port_info['current']
 
                     if self.ancillary_brs:
@@ -1653,10 +1656,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                                   {'iter_num': self.iter_num,
                                    'elapsed': time.time() - start})
                         ancillary_ports = ancillary_port_info['current']
-                        port_stats['ancillary']['added'] = (
-                            len(ancillary_port_info.get('added', [])))
-                        port_stats['ancillary']['removed'] = (
-                            len(ancillary_port_info.get('removed', [])))
+
 
                     polling_manager.polling_completed()
                     # Keep this flag in the last line of "try" block,
@@ -1668,7 +1668,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     # Put the ports back in self.updated_port
                     self.updated_ports |= updated_ports_copy
                     sync = True
-
+            port_stats = self.get_port_stats(port_info, ancillary_port_info)
             self.loop_count_and_wait(start, port_stats)
 
     def daemon_loop(self):
