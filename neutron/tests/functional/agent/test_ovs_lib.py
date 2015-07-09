@@ -211,6 +211,14 @@ class OVSBridgeTestCase(OVSBridgeTestBase):
         expected = set([vif_ports[0].vif_id])
         self.assertEqual(expected, ports)
 
+    def test_db_list(self):
+        for i in range(2):
+            self.create_ovs_port()
+        port_names = self.br.get_port_name_list()
+        db_ports = self.br.db_list('Interface', columns=['name'])
+        db_ports_names = [p['name'] for p in db_ports]
+        self.assertEqual(port_names, db_ports_names)
+
     def test_get_port_tag_dict(self):
         # Simple case tested in port test_set_get_clear_db_val
         pass
