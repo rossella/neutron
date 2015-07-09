@@ -375,9 +375,9 @@ class DbListCommand(BaseCommand):
                 {
                     c: idlutils.get_column_value(self.table.rows[uuid], c)
                     for c in self.columns
-                    if not self.if_exists or uuid in self.table.rows
                 }
                 for uuid in self.records
+                if not self.if_exists or uuid in self.table.rows
             ]
         except KeyError:
             # NOTE(kevinbenton): this is converted to a RuntimeError for compat

@@ -211,6 +211,21 @@ class OVSBridgeTestCase(OVSBridgeTestBase):
         expected = set([vif_ports[0].vif_id])
         self.assertEqual(expected, ports)
 
+    def bulla(self):
+        for i in range(2):
+            self.create_ovs_port()
+        vif_ports = [self.create_ovs_vif_port() for i in range(2)]
+        port_names = self.br.get_port_name_list()
+        import pdb; pdb.set_trace()  # XXX BREAKPOINT
+        cmd = self.ovs.ovsdb.db_list('Interface', port_names,
+                                     columns=['name', 'external_ids', 'ofport'],
+                                     if_exists=True)
+        self.ovs.delete_port(port_names[0])
+        actual = cmd.execute()
+        expected = set([vif_ports[1].vif_id])
+        self.assertEqual(expected, actual)
+
+
     def test_get_port_tag_dict(self):
         # Simple case tested in port test_set_get_clear_db_val
         pass
