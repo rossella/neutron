@@ -272,6 +272,45 @@ class TestOVSAgent(OVSAgentTestFramework):
             lambda: self._expected_plugin_rpc_call(
                 agent.plugin_rpc.update_device_up, ports_ids))
 
+    def test_ovs_dead(self):
+        agent = self.create_agent()
+        agent.check_ovs_status = mock.Mock()
+        agent._agent_has_updates = mock.Mock(return_value=True)
+        loop_var = 10
+
+        def _loop_until_ovs_ok():
+            if loop_var > 0 :
+                loop_var = loop_var -1
+                self.assertFalse(agent._agent_has_updates.called)
+                return constants.OVS_DEAD
+            else:
+                return constants.OVS_NORMAL
+
+        agent.check_ovs_status.side_effect = _loop_until_ovs_ok
+        self.start_agent(agent)
+        agent_utils.wait_until_true(
+            agent._agent_has_updates.called)
+
+    def test_reprocess_port_ovs_restarted(self):
+        agent = self.create_agent()
+        agent.check_ovs_status = mock.Mock()
+        agent.check_ovs_status.side_effect = [
+            constants.OVS_NORMAL,
+            constants.OVS_RESTARTED
+        ]
+        self.start_agent(agent)
+        network = self._create_test_network_dict()
+        ports = self._create_ports(network, agent)
+        self._plug_ports(network, ports, agent)
+        up_ports_ids = [p['id'] for p in ports]
+        agent_utils.wait_until_true(
+            lambda: self._expected_plugin_rpc_call(
+                agent.plugin_rpc.update_device_up, up_ports_ids))
+        # OVS restarted
+        agent_utils.wait_until_true(
+            lambda: self._expected_plugin_rpc_call(
+                agent.plugin_rpc.update_device_up, up_ports_ids))
+
     def test_port_vlan_tags(self):
         agent = self.create_agent()
         self.start_agent(agent)
