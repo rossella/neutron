@@ -511,16 +511,13 @@ class TunnelTest(object):
                                    'external_ids': {
                                        'attached-mac': 'test_mac'}}]}
 
-        reply_pe_1 = {'current': set(['tap0']),
-                      'added': set(['tap0']),
+        reply_pe_1 = {'added': set(['tap0']),
                       'removed': set([])}
 
-        reply_pe_2 = {'current': set([]),
-                      'added': set([]),
+        reply_pe_2 = {'added': set([]),
                       'removed': set(['tap0'])}
 
-        reply_ancillary = {'current': set([]),
-                           'added': set([]),
+        reply_ancillary = {'added': set([]),
                            'removed': set([])}
 
         self.mock_int_bridge_expected += [
@@ -576,15 +573,14 @@ class TunnelTest(object):
             log_exception.assert_called_once_with(
                 "Error while processing VIF ports")
             process_p_events.assert_has_calls([
-                mock.call(reply_ge_1, set(), set(), failed_devices,
+                mock.call(reply_ge_1, failed_devices,
                           failed_ancillary_devices, devices_not_ready, set()),
-                mock.call(reply_ge_2, set(['tap0']), set(),
+                mock.call(reply_ge_2,
                           failed_devices, failed_ancillary_devices,
                           devices_not_ready, set())
             ])
             process_network_ports.assert_has_calls([
-                mock.call({'current': set(['tap0']),
-                           'removed': set([]),
+                mock.call({'removed': set([]),
                            'added': set(['tap0'])}, False),
             ])
 
