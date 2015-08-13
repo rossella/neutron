@@ -1562,8 +1562,8 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                               "starting polling. Elapsed:%(elapsed).3f",
                               {'iter_num': self.iter_num,
                                'elapsed': time.time() - start})
-                    # Save updated ports dict to perform rollback in
-                    # case resync would be needed, and then clear
+                    # Save in updated_ports_copy the updated ports that will be
+                    # processed in this iteration  and then clear
                     # self.updated_ports. As the greenthread should not yield
                     # between these two statements, this will be thread-safe
                     updated_ports_copy = self.updated_ports
@@ -1624,8 +1624,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                         ovs_restarted = False
                 except Exception:
                     LOG.exception(_LE("Error while processing VIF ports"))
-                    # Put the ports back in self.updated_port
-                    self.updated_ports |= updated_ports_copy
                     sync = True
             port_stats = self.get_port_stats(port_info, ancillary_port_info)
             self.loop_count_and_wait(start, port_stats)
