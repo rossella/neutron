@@ -101,7 +101,8 @@ class DhcpRpcCallback(n_rpc.RpcCallback):
         plugin = manager.NeutronManager.get_plugin()
         filters = {'network_id': [network['id'] for network in networks]}
         ports = plugin.get_ports(context, filters=filters)
-        filters['enable_dhcp'] = [True]
+        if not cfg.CONF.use_external_dhcp:
+            filters['enable_dhcp'] = [True]
         subnets = plugin.get_subnets(context, filters=filters)
 
         for network in networks:
@@ -156,8 +157,9 @@ class DhcpRpcCallback(n_rpc.RpcCallback):
         subnets = dict([(s['id'], s) for s in
                         plugin.get_subnets(context, filters=filters)])
 
-        dhcp_enabled_subnet_ids = [s['id'] for s in
-                                   subnets.values() if s['enable_dhcp']]
+        dhcp_enabled_subnet_ids = [
+            s['id'] for s in subnets.values() if (
+                s['enable_dhcp'] or cfg.CONF.use_external_dhcp)]
 
         try:
             filters = dict(network_id=[network_id], device_id=[device_id])

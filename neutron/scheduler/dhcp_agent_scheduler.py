@@ -103,7 +103,7 @@ class ChanceScheduler(object):
             fields = ['network_id', 'enable_dhcp']
             subnets = plugin.get_subnets(context, fields=fields)
             net_ids = set(s['network_id'] for s in subnets
-                          if s['enable_dhcp'])
+                          if (s['enable_dhcp'] or cfg.CONF.use_external_dhcp))
             if not net_ids:
                 LOG.debug(_('No non-hosted networks'))
                 return False
