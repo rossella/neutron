@@ -205,6 +205,11 @@ class DhcpLocalProcess(DhcpBase):
             interface_name = self.device_manager.setup(self.network)
             self.interface_name = interface_name
             self.spawn_process()
+        elif cfg.CONF.use_external_dhcp and (
+            not self.network['router:external']):
+            # spawn only the metadata server
+            interface_name = self.device_manager.setup(self.network)
+            self.interface_name = interface_name
 
     def disable(self, retain_port=False):
         """Disable DHCP for this network by killing the local process."""
@@ -444,7 +449,7 @@ class Dnsmasq(DhcpLocalProcess):
         """Rebuild the dnsmasq config and signal the dnsmasq to reload."""
 
         # If all subnets turn off dhcp, kill the process.
-        if not self._enable_dhcp():
+        if not self._enable_dhcp() and not cfg.CONF.use_external_dhcp:
             self.disable()
             LOG.debug(_('Killing dhcpmasq for network since all subnets have '
                         'turned off DHCP: %s'), self.network.id)
@@ -944,7 +949,7 @@ class DeviceManager(object):
         subnets = {}
         dhcp_enabled_subnet_ids = []
         for subnet in network.subnets:
-            if subnet.enable_dhcp:
+            if subnet.enable_dhcp or cfg.CONF.use_external_dhcp:
                 dhcp_enabled_subnet_ids.append(subnet.id)
                 subnets[subnet.id] = subnet
 

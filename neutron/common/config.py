@@ -76,6 +76,9 @@ core_opts = [
     cfg.BoolOpt('dhcp_agent_notification', default=True,
                 help=_("Allow sending resource operation"
                        " notification to DHCP agent")),
+    cfg.BoolOpt('use_external_dhcp', default=False,
+                help=_('Specify if network uses external dhcp service and'
+                       'requires access to MD proxy.')),
     cfg.BoolOpt('allow_overlapping_ips', default=False,
                 help=_("Allow overlapping IP support in Neutron")),
     cfg.StrOpt('host', default=utils.get_hostname(),

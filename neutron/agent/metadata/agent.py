@@ -15,6 +15,7 @@
 import hashlib
 import hmac
 import os
+import re
 import socket
 import sys
 
@@ -28,6 +29,8 @@ import six.moves.urllib.parse as urlparse
 import webob
 
 from neutron.agent.common import config as agent_conf
+from neutron.agent.linux import dhcp
+from neutron.agent.linux import ip_lib
 from neutron.agent import rpc as agent_rpc
 from neutron.common import config
 from neutron.common import constants as n_const
@@ -181,12 +184,35 @@ class MetadataProxyHandler(object):
 
         return self._get_ports_for_remote_address(remote_address, networks)
 
+    def _get_ports_for_mac(self, remote_address, network_id):
+        ns = dhcp.NS_PREFIX + network_id
+        cmd = ['arp', '-n', remote_address]
+        r = cfg.CONF.AGENT.root_helper
+        root_helper = agent_conf.get_root_helper(cfg.CONF)
+        LOG.debug("helper ff%s", root_helper)
+        ip_wrapper = ip_lib.IPWrapper(namespace=ns, root_helper=root_helper)
+        try:
+            arp = ip_wrapper.netns.execute(cmd)
+            mac = re.search(r'([0-9A-F]{2}[:-]){5}([0-9A-F]{2})',
+                            str(arp), re.I).group()
+            LOG.debug("MAC address %(mac)s for IP address %(r_ip)s",
+                      {'mac': mac, 'r_ip': remote_address})
+            qclient = self._get_neutron_client()
+            return qclient.list_ports(
+                network_id=network_id, mac_address=mac)['ports']
+        except Exception:
+            LOG.debug("Unable to retrieve MAC address for %s",
+                      remote_address)
+
     def _get_instance_and_tenant_id(self, req):
         remote_address = req.headers.get('X-Forwarded-For')
         network_id = req.headers.get('X-Neutron-Network-ID')
         router_id = req.headers.get('X-Neutron-Router-ID')
 
-        ports = self._get_ports(remote_address, network_id, router_id)
+        if cfg.CONF.use_external_dhcp and network_id:
+            ports = self._get_ports_for_mac(remote_address, network_id)
+        else:
+            ports = self._get_ports(remote_address, network_id, router_id)
 
         if len(ports) == 1:
             return ports[0]['device_id'], ports[0]['tenant_id']
@@ -378,5 +404,6 @@ def main():
     config.init(sys.argv[1:])
     config.setup_logging()
     utils.log_opt_values(LOG)
+    agent_conf.register_root_helper(cfg.CONF)
     proxy = UnixDomainMetadataProxy(cfg.CONF)
     proxy.run()

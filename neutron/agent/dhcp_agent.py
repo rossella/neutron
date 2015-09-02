@@ -232,7 +232,7 @@ class DhcpAgent(manager.Manager):
         dhcp_network_enabled = False
 
         for subnet in network.subnets:
-            if subnet.enable_dhcp:
+            if subnet.enable_dhcp or cfg.CONF.use_external_dhcp:
                 if self.call_driver('enable', network):
                     dhcp_network_enabled = True
                     self.cache.put(network)
@@ -240,7 +240,8 @@ class DhcpAgent(manager.Manager):
 
         if enable_metadata and dhcp_network_enabled:
             for subnet in network.subnets:
-                if subnet.ip_version == 4 and subnet.enable_dhcp:
+                if subnet.ip_version == 4 and (
+                        subnet.enable_dhcp or cfg.CONF.use_external_dhcp):
                     self.enable_isolated_metadata_proxy(network)
                     break
 
