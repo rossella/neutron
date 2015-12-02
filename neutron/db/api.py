@@ -95,8 +95,9 @@ def get_objects(context, model, **kwargs):
 
 def create_object(context, model, values):
     with context.session.begin(subtransactions=True):
-        if 'id' not in values:
-            values['id'] = uuidutils.generate_uuid()
+        #TODO(rossella_s): extension table don't have IDs, fix this
+        #if 'id' not in values:
+        #    values['id'] = uuidutils.generate_uuid()
         db_obj = model(**values)
         context.session.add(db_obj)
     return db_obj.__dict__

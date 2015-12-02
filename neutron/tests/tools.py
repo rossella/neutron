@@ -178,6 +178,13 @@ def get_random_boolean():
 def get_random_integer(range_begin=0, range_end=1000):
     return random.randint(range_begin, range_end)
 
+def get_random_mac():
+    # TODO(rossella_s) make this random
+    return "01:98:18:A1:34:ed"
+
+def get_random_ip():
+    # TODO(rossella_s) make this random
+    return "10.0.0.1"
 
 def is_bsd():
     """Return True on BSD-based systems."""
