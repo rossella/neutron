@@ -111,7 +111,7 @@ class SubnetRoute(model_base.BASEV2, Route):
                           primary_key=True)
 
 
-class Port(model_base.HasStandardAttributes, model_base.BASEV2,
+class  Port(model_base.HasStandardAttributes, model_base.BASEV2,
            HasId, HasTenant):
     """Represents a port on a Neutron v2 network."""
 
