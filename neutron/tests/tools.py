@@ -192,6 +192,10 @@ def get_random_mac():
         'fa:16:3e:00:00:00'.split(':'))
 
 
+def get_random_dict_of_strings():
+    return {get_random_string(): get_random_string()}
+
+
 def is_bsd():
     """Return True on BSD-based systems."""
 

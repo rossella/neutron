@@ -28,6 +28,10 @@ object_data = {
     'QosRuleType': '1.0-d0df298d49eeffab91af18d1a4cf7eaf',
     'QosPolicy': '1.0-721fa60ea8f0e8f15d456d6e917dfe59',
     'AllowedAddressPair': '1.0-66b907b552885e572a364c79e4b24c05',
+    'Port': '1.0-7017dee76fde705a498769332e89e16f',
+    'PortBinding': '1.0-afe68171d706b066787451eaf6f4ee5e',
+    'PortBindingPort': '1.0-a45cb0616cbbc0e9c57339082302d6d3',
+    'IPAllocation': '1.0-5853dd40f4e884184b1ff6a83cd9f2a9'
 }
 
 
