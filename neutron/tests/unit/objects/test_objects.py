@@ -27,6 +27,7 @@ object_data = {
     'QosBandwidthLimitRule': '1.0-4e44a8f5c2895ab1278399f87b40a13d',
     'QosRuleType': '1.0-d0df298d49eeffab91af18d1a4cf7eaf',
     'QosPolicy': '1.0-721fa60ea8f0e8f15d456d6e917dfe59',
+    'AllowedAddressPair': '1.0-66b907b552885e572a364c79e4b24c05',
 }
 
 
