@@ -23,6 +23,7 @@ import fixtures
 import six
 
 from neutron.api.v2 import attributes
+from neutron.common import utils as common_utils
 
 
 class AttributeMapMemento(fixtures.Fixture):
@@ -177,6 +178,18 @@ def get_random_boolean():
 
 def get_random_integer(range_begin=0, range_end=1000):
     return random.randint(range_begin, range_end)
+
+
+def get_random_ip():
+    return '10.%d.%d.%d' % (
+                         random.randint(3, 254),
+                         random.randint(3, 254),
+                         random.randint(3, 254))
+
+
+def get_random_mac():
+    return common_utils.get_random_mac(
+        'fa:16:3e:00:00:00'.split(':'))
 
 
 def is_bsd():

@@ -78,7 +78,9 @@ FIELD_TYPE_VALUE_GENERATOR_MAP = {
     obj_fields.IntegerField: tools.get_random_integer,
     obj_fields.StringField: tools.get_random_string,
     obj_fields.UUIDField: tools.get_random_string,
-    obj_fields.ListOfObjectsField: lambda: []
+    obj_fields.ListOfObjectsField: lambda: [],
+    obj_fields.IPAddressField: tools.get_random_ip,
+    obj_fields.MACAddressField: tools.get_random_mac
 }
 
 
