@@ -34,10 +34,10 @@ from neutron.db import l3_attrs_db
 from neutron.db import model_base
 from neutron.db import models_v2
 from neutron.extensions import l3agentscheduler
-from neutron.extensions import portbindings
 from neutron.i18n import _LE, _LI, _LW
 from neutron import manager
 from neutron.plugins.common import constants as service_constants
+from neutron.plugins.ml2 import models as ml2_models
 
 
 LOG = logging.getLogger(__name__)
@@ -467,17 +467,27 @@ class L3AgentSchedulerDbMixin(l3agentscheduler.L3AgentSchedulerPluginBase,
         if not subnet_ids:
             return False
 
-        core_plugin = manager.NeutronManager.get_plugin()
-        filters = {'fixed_ips': {'subnet_id': subnet_ids},
-                   portbindings.HOST_ID: [l3_agent['host']]}
-        ports_query = core_plugin._get_ports_query(context, filters=filters)
-        owner_filter = or_(
+        host = l3_agent['host']
+        Binding = ml2_models.PortBinding
+        IPAllocation = models_v2.IPAllocation
+        Port = models_v2.Port
+
+        query = context.session.query(Binding)
+        query = query.join(Binding.port)
+        query = query.join(Port.fixed_ips)
+        query = query.filter(
+            IPAllocation.subnet_id.in_(subnet_ids))
+        device_filter = or_(
             models_v2.Port.device_owner.startswith(
                 constants.DEVICE_OWNER_COMPUTE_PREFIX),
             models_v2.Port.device_owner.in_(
                 n_utils.get_other_dvr_serviced_device_owners()))
-        ports_query = ports_query.filter(owner_filter)
-        return ports_query.first() is not None
+        query = query.filter(device_filter)
+        host_filter = or_(
+            ml2_models.PortBinding.host == host,
+            ml2_models.PortBinding.profile.contains(host))
+        query = query.filter(host_filter)
+        return query.first() is not None
 
     def get_l3_agent_candidates(self, context, sync_router, l3_agents,
                                 ignore_admin_state=False):

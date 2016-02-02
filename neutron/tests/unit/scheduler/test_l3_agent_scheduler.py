@@ -945,6 +945,31 @@ class L3DvrSchedulerTestCase(testlib_api.SqlTestCase):
             self.assertFalse(l3plugin.dvr_vmarp_table_update.called)
             self.assertFalse(l3plugin.dvr_update_router_addvm.called)
 
+    def test__notify_l3_agent_update_port_with_migration_port_profile(self):
+        kwargs = {
+            'context': self.adminContext,
+            'original_port': {
+                portbindings.HOST_ID: 'vm-host',
+                'device_owner': DEVICE_OWNER_COMPUTE,
+            },
+            'port': {
+                portbindings.HOST_ID: 'vm-host',
+                'device_owner': DEVICE_OWNER_COMPUTE,
+                portbindings.PROFILE: {'migrating_to': 'vm-host2'},
+            },
+        }
+        l3plugin = mock.Mock()
+        with mock.patch.object(manager.NeutronManager,
+                               'get_service_plugins',
+                               return_value={'L3_ROUTER_NAT': l3plugin}):
+            l3_dvrscheduler_db._notify_l3_agent_port_update(
+                'port', 'after_update', mock.ANY, **kwargs)
+            l3plugin.dvr_update_router_addvm.assert_called_once_with(
+                self.adminContext, kwargs.get('port'), dest_host='vm-host2')
+            l3plugin.dvr_vmarp_table_update.\
+                assert_called_once_with(
+                    self.adminContext, kwargs.get('port'), 'add')
+
     def test__notify_l3_agent_update_port_no_action(self):
         kwargs = {
             'context': self.adminContext,
@@ -1019,7 +1044,7 @@ class L3DvrSchedulerTestCase(testlib_api.SqlTestCase):
                 mock.ANY, 'foo_agent', 'foo_id')
             self.assertEqual(2, l3plugin.dvr_vmarp_table_update.call_count)
             l3plugin.dvr_update_router_addvm.assert_called_once_with(
-                self.adminContext, kwargs.get('port'))
+                self.adminContext, kwargs.get('port'), dest_host=None)
 
     def test__notify_l3_agent_update_port_removing_routers(self):
         port_id = 'fake-port'
