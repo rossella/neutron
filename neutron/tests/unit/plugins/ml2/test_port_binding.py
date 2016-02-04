@@ -62,6 +62,7 @@ class PortBindingTestCase(test_plugin.NeutronDbPluginV2TestCase):
                            status=None, network_type='local'):
         mac_address = 'aa:aa:aa:aa:aa:aa'
         host_arg = {portbindings.HOST_ID: host,
+                    #portbindings.VNIC_TYPE: portbindings.VNIC_NORMAL,
                     'mac_address': mac_address}
         with self.port(name='name', arg_list=(portbindings.HOST_ID,),
                        **host_arg) as port:

@@ -306,6 +306,10 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         if (binding.vif_type != portbindings.VIF_TYPE_UNBOUND
                 or not binding.host):
             # We either don't need to bind the port or can't
+            LOG.warning(_LW("Port %(port)s with vif type %(vif_type)s "
+                            "cannot be bound to host %(host)s"),
+                        {'port': port_id, 'vif_type': binding.vif_type,
+                         'host': binding.host})
             return context, need_notify, try_again
 
         # The port isn't already bound and the necessary
@@ -1384,8 +1388,8 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
                            filter(models_v2.Port.id.startswith(port_id)).
                            one())
             except sa_exc.NoResultFound:
-                LOG.debug("No ports have port_id starting with %s",
-                          port_id)
+                LOG.info(_LI("No ports have port_id starting with %s"),
+                         port_id)
                 return
             except sa_exc.MultipleResultsFound:
                 LOG.error(_LE("Multiple ports have port_id starting with %s"),
