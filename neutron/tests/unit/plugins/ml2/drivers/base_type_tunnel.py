@@ -18,6 +18,8 @@ from six import moves
 import testtools
 from testtools import matchers
 
+from oslo_db import exception as db_exc
+
 from neutron.common import exceptions as exc
 from neutron.db import api as db
 from neutron.plugins.ml2 import driver_api as api
@@ -121,6 +123,11 @@ class TunnelTypeTestMixin(object):
                 type_tunnel, 'chunks', side_effect=verify_no_chunk) as chunks:
             self.driver.sync_allocations()
             self.assertEqual(2, len(chunks.mock_calls))
+
+    def sync_allocation_resilient_to_duplicate_db_error(self):
+        with mock.patch.object(self.session, 'execute', [
+            db_exc.DBDuplicateEntry, 0]):
+            self.driver.sync_allocations()
 
     def test_partial_segment_is_partial_segment(self):
         segment = {api.NETWORK_TYPE: self.TYPE,

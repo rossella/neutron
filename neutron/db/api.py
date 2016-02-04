@@ -30,6 +30,8 @@ _FACADE = None
 
 MAX_RETRIES = 10
 is_deadlock = lambda e: isinstance(e, db_exc.DBDeadlock)
+is_deadlock_or_duplicate_key = lambda e: isinstance(
+    e, db_exc.DBDeadlock) or isinstance(e, db_exc.DBDuplicateEntry)
 retry_db_errors = oslo_db_api.wrap_db_retry(
     max_retries=MAX_RETRIES,
     retry_on_request=True,
