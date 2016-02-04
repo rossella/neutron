@@ -76,9 +76,7 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
                                                      host,
                                                      cached_networks)
         if not port_context:
-            LOG.warning(_LW("Device %(device)s requested by agent "
-                            "%(agent_id)s not found in database"),
-                        {'device': device, 'agent_id': agent_id})
+            # port was not found in the DB
             return {'device': device}
 
         segment = port_context.bottom_bound_segment
@@ -90,13 +88,7 @@ class RpcCallbacks(type_tunnel.TunnelRpcCallbackMixin):
                     port_context.network.current)
 
         if not segment:
-            LOG.warning(_LW("Device %(device)s requested by agent "
-                            "%(agent_id)s on network %(network_id)s not "
-                            "bound, vif_type: %(vif_type)s"),
-                        {'device': device,
-                         'agent_id': agent_id,
-                         'network_id': port['network_id'],
-                         'vif_type': port_context.vif_type})
+            # port binding failed
             return {'device': device}
 
         if (not host or host == port_context.host):
