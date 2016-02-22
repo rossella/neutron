@@ -15,6 +15,7 @@ import abc
 from oslo_db import exception as obj_exc
 from oslo_utils import reflection
 from oslo_versionedobjects import base as obj_base
+from oslo_versionedobjects import fields as obj_fields
 import six
 
 from neutron._i18n import _
@@ -58,7 +59,15 @@ class NeutronObject(obj_base.VersionedObject,
         self.obj_set_defaults()
 
     def to_dict(self):
-        return dict(self.items())
+        dict_ = dict(self.items())
+        for field in self.synthetic_fields:
+            if field in dict_:
+                if isinstance(dict_[field], list):
+                    dict_[field] = [obj.to_dict() for obj in dict_[field]]
+                else:
+                    dict_[field] = (
+                        dict_[field].to_dict() if dict_[field] else None)
+        return dict_
 
     @classmethod
     def clean_obj_from_primitive(cls, primitive, context=None):
@@ -106,9 +115,10 @@ class NeutronDbObject(NeutronObject):
     def from_db_object(self, *objs):
         for field in self.fields:
             for db_obj in objs:
-                if field in db_obj:
+                if field in db_obj and field not in self.synthetic_fields:
                     setattr(self, field, db_obj[field])
                 break
+        self.load_synthetic_fields()
         self.obj_reset_changes()
 
     @classmethod
@@ -117,6 +127,10 @@ class NeutronDbObject(NeutronObject):
                                    **{cls.primary_key: id})
         if db_obj:
             obj = cls(context, **db_obj)
+            for field in obj.fields:
+                if field not in obj.synthetic_fields and field in db_obj:
+                    obj[field] = db_obj[field]
+            obj.load_synthetic_fields()
             obj.obj_reset_changes()
             return obj
 
@@ -147,6 +161,29 @@ class NeutronDbObject(NeutronObject):
             raise NeutronObjectUpdateForbidden(fields=forbidden_updates)
 
         return fields
+
+    def load_synthetic_fields(self):
+        #TODO(rossella_s) Find a way to handle ObjectFields with
+        # subclasses=True
+        for field in self.synthetic_fields:
+            objclasses = obj_base.VersionedObjectRegistry.obj_classes().get(
+                self.fields[field].objname)
+            if not objclasses:
+                # NOTE(rossella_s) some synthetic fields are not handled by
+                # this method, for example the ones that have subclasses, see
+                # QosRule
+                break
+            objclass = objclasses[0]
+            objs = objclass.get_objects(self._context, **{
+                objclass.primary_key:getattr(self, self.primary_key)})
+            if objs:
+                if isinstance(self.fields[field], obj_fields.ObjectField):
+                    setattr(self, field, objs[0])
+                else:
+                    setattr(self, field, objs)
+            else:
+                setattr(self, field, None)
+            self.obj_reset_changes([field])
 
     def create(self):
         fields = self._get_changed_persistent_fields()
