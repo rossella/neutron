@@ -54,13 +54,14 @@ class FakeNeutronDbObject(base.NeutronDbObject):
     fields = {
         'id': obj_fields.UUIDField(),
         'field1': obj_fields.StringField(),
-        'field2': obj_fields.StringField(),
+        'obj_field': obj_fields.ObjectField('FakeSmallNeutronObject',
+                                            nullable=True),
         'shared': obj_fields.BooleanField(default=False),
     }
 
     fields_no_update = ['id']
 
-    synthetic_fields = ['field2']
+    synthetic_fields = ['obj_field']
 
     def get_bound_tenant_ids(cls, context, policy_id):
         pass
