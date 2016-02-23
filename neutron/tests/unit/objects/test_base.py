@@ -38,12 +38,17 @@ class FakeModel(object):
         pass
 
 
+class ObjectFieldsModel(object):
+    def __init__(self, *args, **kwargs):
+        pass
+
+
 @obj_base.VersionedObjectRegistry.register_if(False)
 class FakeSmallNeutronObject(base.NeutronDbObject):
     # Version 1.0: Initial version
     VERSION = '1.0'
 
-    db_model = FakeModel
+    db_model = ObjectFieldsModel
 
     primary_key = 'field1'
 
@@ -63,12 +68,13 @@ class FakeNeutronObject(base.NeutronDbObject):
     fields = {
         'id': obj_fields.UUIDField(),
         'field1': obj_fields.StringField(),
-        'obj_field': obj_fields.ObjectField('FakeSmallNeutronObject')
+        'obj_field': obj_fields.ObjectField('FakeSmallNeutronObject',
+                                            nullable=True)
     }
 
     fields_no_update = ['id']
 
-    synthetic_fields = ['field2']
+    synthetic_fields = ['obj_field']
 
 
 @obj_base.VersionedObjectRegistry.register_if(False)
@@ -94,6 +100,7 @@ FIELD_TYPE_VALUE_GENERATOR_MAP = {
     obj_fields.IntegerField: tools.get_random_integer,
     obj_fields.StringField: tools.get_random_string,
     obj_fields.UUIDField: uuidutils.generate_uuid,
+    obj_fields.ObjectField: lambda: None,
     obj_fields.ListOfObjectsField: lambda: []
 }
 
@@ -116,13 +123,17 @@ class _BaseObjectTestCase(object):
         valid_field = [f for f in self._test_class.fields
                        if f not in self._test_class.synthetic_fields][0]
         self.valid_field_filter = {valid_field: self.db_obj[valid_field]}
-        synthetic_obj_fields = self.get_random_fields(FakeSmallNeutronObject)
-        self.synthethic_objs = [FakeSmallNeutronObject(**synthetic_obj_fields)]
         p_registry = mock.patch(
             'oslo_versionedobjects.base.VersionedObjectRegistry.obj_classes',
              return_value={'FakeSmallNeutronObject': [FakeSmallNeutronObject]})
         p_registry.start()
-        self.prepare_get_objects_mock()
+        synthetic_obj_fields = self.get_random_fields(FakeSmallNeutronObject)
+        self.model_map = {
+            self._test_class.db_model: self.db_objs,
+            ObjectFieldsModel: [synthetic_obj_fields]}
+        p_get_objects = mock.patch.object(db_api, 'get_objects',
+                                          side_effect=self.fake_get_objects)
+        #p_get_objects.start()
 
     @classmethod
     def get_random_fields(cls, obj_cls=None):
@@ -141,33 +152,21 @@ class _BaseObjectTestCase(object):
     def _is_test_class(cls, obj):
         return isinstance(obj, cls._test_class)
 
-    @classmethod
-    def prepare_get_objects_mock(cls):
+    def fake_get_objects(self, context, model, **kwargs):
+        return self.model_map[model]
 
-        original_get_objects = cls._test_class.get_objects
-
-        def mock_get_objects(cls, context, **kwargs):
-            import pdb; pdb.set_trace()  # XXX BREAKPOINT
-            if 'obj_field' in kwargs:
-                return self.synthethic_objs
-            else:
-                return original_get_objects(context, **kwargs)
-
-        cls._test_class.get_objects = mock.Mock(side_effect=mock_get_objects)
 
 class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
 
     def test_get_by_id(self):
         with mock.patch.object(db_api, 'get_object',
                                return_value=self.db_obj) as get_object_mock:
-             with mock.patch.object(base.NeutronDbObject, 'get_objects',
-                  return_value=self.synthethic_objs):
-                obj = self._test_class.get_by_id(self.context, id='fake_id')
-                self.assertTrue(self._is_test_class(obj))
-                self.assertEqual(self.db_obj, get_obj_db_fields(obj))
-                get_object_mock.assert_called_once_with(
-                    self.context, self._test_class.db_model,
-                    **{self._test_class.primary_key: 'fake_id'})
+            obj = self._test_class.get_by_id(self.context, id='fake_id')
+            self.assertTrue(self._is_test_class(obj))
+            self.assertEqual(self.db_obj, get_obj_db_fields(obj))
+            get_object_mock.assert_called_once_with(
+                self.context, self._test_class.db_model,
+                **{self._test_class.primary_key: 'fake_id'})
 
     def test_get_by_id_missing_object(self):
         with mock.patch.object(db_api, 'get_object', return_value=None):
@@ -217,14 +216,14 @@ class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
                           self._test_class)
 
         with mock.patch.object(db_api, 'get_objects',
-                               return_value=self.db_objs):
+                               side_effect=self.fake_get_objects):
             self.assertRaises(base.exceptions.InvalidInput,
                               self._test_class.get_objects, self.context,
                               **{synthetic_fields[0]: 'xxx'})
 
     def test_get_objects_invalid_fields(self):
         with mock.patch.object(db_api, 'get_objects',
-                               return_value=self.db_objs):
+                               side_effect=self.fake_get_objects):
             self.assertRaises(base.exceptions.InvalidInput,
                               self._test_class.get_objects, self.context,
                               fake_field='xxx')
@@ -245,8 +244,8 @@ class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
     def test_create(self):
         with mock.patch.object(db_api, 'create_object',
                                return_value=self.db_obj) as create_mock:
-            with mock.patch.object(base.NeutronDbObject, 'get_objects',
-                  return_value=self.synthethic_objs):
+            with mock.patch.object(db_api, 'get_objects',
+                  side_effect=self.fake_get_objects):
                 obj = self._test_class(self.context, **self.db_obj)
                 self._check_equal(obj, self.db_obj)
                 obj.create()
@@ -254,15 +253,18 @@ class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
                 create_mock.assert_called_once_with(
                     self.context, self._test_class.db_model, self.db_obj)
 
+    def fake_get_objects(self, context, model, **kwargs):
+        return self.model_map[model]
+
     def test_create_updates_from_db_object(self):
         with mock.patch.object(db_api, 'create_object',
                                return_value=self.db_obj):
-            #with mock.patch.object(base.NeutronDbObject, 'get_objects',
-            #      side_effect=self.mock_get_objects):
-            obj = self._test_class(self.context, **self.db_objs[1])
-            self._check_equal(obj, self.db_objs[1])
-            obj.create()
-            self._check_equal(obj, self.db_obj)
+            with mock.patch.object(db_api, 'get_objects',
+                  side_effect=self.fake_get_objects):
+                obj = self._test_class(self.context, **self.db_objs[1])
+                self._check_equal(obj, self.db_objs[1])
+                obj.create()
+                self._check_equal(obj, self.db_obj)
 
     def test_create_duplicates(self):
         with mock.patch.object(db_api, 'create_object',
@@ -285,8 +287,8 @@ class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
         with mock.patch.object(base.NeutronDbObject,
                                '_get_changed_persistent_fields',
                                return_value=fields_to_update):
-             with mock.patch.object(base.NeutronDbObject, 'get_objects',
-                  return_value=self.synthethic_objs):
+             with mock.patch.object(db_api, 'get_objects',
+                  side_effect=self.fake_get_objects):
                 obj = self._test_class(self.context, **self.db_obj)
                 obj.update()
                 update_mock.assert_called_once_with(
@@ -310,8 +312,8 @@ class BaseObjectIfaceTestCase(_BaseObjectTestCase, test_base.BaseTestCase):
     def test_update_updates_from_db_object(self):
         with mock.patch.object(db_api, 'update_object',
                                return_value=self.db_obj):
-            with mock.patch.object(base.NeutronDbObject, 'get_objects',
-                  return_value=self.synthethic_objs):
+            with mock.patch.object(db_api, 'get_objects',
+                  side_effect=self.fake_get_objects):
                 obj = self._test_class(self.context, **self.db_objs[1])
                 fields_to_update = self.get_updatable_fields(self.db_objs[1])
                 with mock.patch.object(base.NeutronDbObject,

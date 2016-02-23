@@ -35,9 +35,6 @@ class QosPolicyObjectTestCase(test_base.BaseObjectIfaceTestCase):
             self._test_class.db_model: self.db_objs,
             rule.QosBandwidthLimitRule.db_model: self.db_qos_bandwidth_rules}
 
-    def fake_get_objects(self, context, model, **kwargs):
-        return self.model_map[model]
-
     def fake_get_object(self, context, model, id):
         objects = self.model_map[model]
         return [obj for obj in objects if obj['id'] == id][0]
@@ -106,6 +103,14 @@ class QosPolicyDbObjectTestCase(test_base.BaseDbObjectTestCase,
 
     def setUp(self):
         super(QosPolicyDbObjectTestCase, self).setUp()
+        self.db_qos_bandwidth_rules = [
+            self.get_random_fields(rule.QosBandwidthLimitRule)
+            for _ in range(3)]
+
+        self.model_map = {
+            self._test_class.db_model: self.db_objs,
+            rule.QosBandwidthLimitRule.db_model: self.db_qos_bandwidth_rules}
+
         self._create_test_network()
         self._create_test_port(self._network)
 
@@ -269,6 +274,7 @@ class QosPolicyDbObjectTestCase(test_base.BaseDbObjectTestCase,
         obj.delete()
 
     def test_reload_rules_reloads_rules(self):
+        import pdb; pdb.set_trace()  # XXX BREAKPOINT
         policy_obj, rule_obj = self._create_test_policy_with_rule()
         self.assertEqual([], policy_obj.rules)
 
