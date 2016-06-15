@@ -208,6 +208,7 @@ class OVSAgentTestFramework(base.BaseOVSLinuxTestCase):
     def _get_device_details(self, port, network):
         dev = {'device': port['id'],
                'port_id': port['id'],
+               'mac_address': port['mac_address'],
                'network_id': network['id'],
                'network_type': network.get('network_type', 'vlan'),
                'physical_network': network.get('physical_network', 'physnet'),

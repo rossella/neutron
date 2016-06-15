@@ -1289,11 +1289,12 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         cur_ancillary_ports |= ancillary_port_info['current']
 
         def _process_port(port, ports, ancillary_ports):
-            # check 'iface-id' is set otherwise is not a port
-            # the agent should care about
-            if 'attached-mac' in port.get('external_ids', []):
+            external_ids = port.get('external_ids', [])
+            if 'attached-mac' in external_ids:
+                # check 'iface-id' is set otherwise is not a port
+                # the agent should care about
                 iface_id = self.int_br.portid_from_external_ids(
-                    port['external_ids'])
+                    external_ids)
                 if iface_id:
                     if port['ofport'] == ovs_lib.UNASSIGNED_OFPORT:
                         LOG.debug("Port %s not ready yet on the bridge",
@@ -1503,6 +1504,7 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
         for details in devices:
             device = details['device']
             LOG.debug("Processing port: %s", device)
+            self.ext_manager.handle_port(self.context, details)
             port = vif_by_id.get(device)
             if not port:
                 # The port disappeared and cannot be processed
@@ -1533,7 +1535,6 @@ class OVSNeutronAgent(sg_rpc.SecurityGroupAgentRpcCallbackMixin,
                     security_disabled_devices.append(device)
                 self._update_port_network(details['port_id'],
                                           details['network_id'])
-                self.ext_manager.handle_port(self.context, details)
             else:
                 LOG.warning(
                     _LW("Device %s not defined on plugin or binding failed"),

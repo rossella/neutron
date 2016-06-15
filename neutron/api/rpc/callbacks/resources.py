@@ -24,6 +24,8 @@ _VALID_TYPES = [cls.obj_name() for cls in _VALID_CLS]
 
 # Supported types
 QOS_POLICY = _QOS_POLICY_CLS.obj_name()
+TRUNK = 'trunk'
+SUBPORT = 'subport'
 
 
 _TYPE_TO_CLS_MAP = {
