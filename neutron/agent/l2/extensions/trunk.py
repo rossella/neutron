@@ -21,6 +21,7 @@ from neutron._i18n import _LW, _LI
 from neutron.agent.l2 import agent_extension
 from neutron.agent.common import ovs_lib
 from neutron.api.rpc.callbacks import events
+from neutron.api.rpc.callbacks import resources
 from neutron.api.rpc.handlers import resources_rpc
 
 LOG = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ TRUNK_DEV = 'tp'
 SUBPORT_DEV = 'sp'
 
 class TrunkAgentExtension(agent_extension.AgentCoreResourceExtension):
-    #SUPPORTED_RESOURCES = [resources.TRUNK]
+    SUPPORTED_RESOURCES = [resources.TRUNK, resources.SUBPORT]
 
     def initialize(self, connection, driver_type):
         """Perform Agent Extension initialization.
@@ -58,8 +59,9 @@ class TrunkAgentExtension(agent_extension.AgentCoreResourceExtension):
             connection.create_consumer(topic, endpoints, fanout=True)
 
     def _handle_notification(self, port, event_type):
+        # TODO(rossella_s) handle all the events
         if event_type == events.UPDATED:
-            self.update_port(port)
+            self.update_trunk_port(port)
 
     #TODO(rossella_s) we need another hook to process the trunk deletion when
     # the VM is deleted...maybe handle_port_deletion called in
@@ -124,10 +126,6 @@ class TrunkAgentExtension(agent_extension.AgentCoreResourceExtension):
             (SUBPORT_DEV + '-int-' + port_id)[:constants.DEVICE_NAME_MAX_LEN-1],
             (SUBPORT_DEV +'-trunk' + port_id)[:constants.DEVICE_NAME_MAX_LEN-1])
 
-    def update_port(self, context, port):
-        #TODO(rossella_s) implement
-        return
-
-    def delete_port(self, context, port):
+    def update_trunk_port(self, context, port):
         #TODO(rossella_s) implement
         return
