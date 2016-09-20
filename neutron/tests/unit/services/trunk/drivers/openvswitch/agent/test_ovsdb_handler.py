@@ -236,5 +236,4 @@ class TestOVSDBHandler(base.BaseTestCase):
             self.ovsdb_handler._set_trunk_metadata(None, None, 'foo', [])
             mock_br.set_db_attribute.assert_called_once_with(
                 'Interface', 'foo', 'external_ids',
-                {'bridge_name': mock.ANY, 'trunk_id': 'foo',
-                 'subport_ids': '[]'})
+                {'trunk_id': 'foo', 'subport_ids': '[]'})

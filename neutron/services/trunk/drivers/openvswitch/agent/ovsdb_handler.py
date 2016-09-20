@@ -91,6 +91,12 @@ def bridge_has_instance_port(bridge):
                if not is_trunk_service_port(iface))
 
 
+def get_trunk_bridge_local_port(bridge):
+    return bridge.get_ports_attributes('Interface',
+                                       columns=['name', 'external_ids'],
+                                       ports=[bridge], if_exists=True)[0]
+
+
 class OVSDBHandler(object):
     """It listens to OVSDB events to create the physical resources associated
     to a logical trunk in response to OVSDB events (such as VM boot and/or
@@ -196,7 +202,7 @@ class OVSDBHandler(object):
         """
         try:
             parent_port_id, trunk_id, subport_ids = self._get_trunk_metadata(
-                port)
+                bridge_name)
             self.unwire_subports_for_trunk(trunk_id, subport_ids)
             self.trunk_manager.remove_trunk(trunk_id, parent_port_id)
         except tman.TrunkManagerError as te:
@@ -239,7 +245,8 @@ class OVSDBHandler(object):
 
         try:
             self._set_trunk_metadata(
-                trunk_bridge, parent_port, trunk_id, subport_ids)
+                trunk_bridge, trunk_id, subport_ids)
+            self._set_bridge_name(parent_port, trunk_bridge)
         except RuntimeError:
             LOG.error(_LE("Failed to set metadata for trunk %s"), trunk_id)
             # NOTE(status_police): Trunk bridge has missing metadata now, it
@@ -328,23 +335,32 @@ class OVSDBHandler(object):
             ctx, trunk.id, trunk.sub_ports, trunk_bridge=trunk_br,
             parent_port=port)
 
-    def _set_trunk_metadata(self, trunk_bridge, port, trunk_id, subport_ids):
-        """Set trunk metadata in OVS port for trunk parent port."""
-        # update the parent port external_ids to store the trunk bridge
+    def _set_bridge_name(self, port, trunk_bridge):
+        """Set the bridge name in the external ids."""
+        # Set the bridge name in the parent port so that we don't need an
+        # extra query when handling a remove event
+        port['external_ids']['bridge_name'] = trunk_bridge
+        trunk_bridge.set_db_attribute(
+            'Interface', port['name'], 'external_ids', port['external_ids'])
+
+    def _set_trunk_metadata(self, trunk_bridge, trunk_id, subport_ids):
+        """Set trunk metadata in OVS local port for trunk bridge."""
+        # update the local port external_ids to store the trunk bridge
         # name, trunk id and subport ids so we can easily remove the trunk
         # bridge and service ports once this port is removed
         trunk_bridge = trunk_bridge or ovs_lib.OVSBridge(
             utils.gen_trunk_br_name(trunk_id))
-        port = port or self._get_parent_port(trunk_bridge)
+        port =  get_trunk_bridge_local_port(trunk_bridge)
 
-        port['external_ids']['bridge_name'] = trunk_bridge.br_name
         port['external_ids']['trunk_id'] = trunk_id
         port['external_ids']['subport_ids'] = jsonutils.dumps(subport_ids)
         trunk_bridge.set_db_attribute(
             'Interface', port['name'], 'external_ids', port['external_ids'])
 
-    def _get_trunk_metadata(self, port):
-        """Get trunk metadata from OVS port."""
+    def _get_trunk_metadata(self, bridge_name):
+        """Get trunk metadata from OVS local port."""
+        trunk_bridge = ovs_lib.OVSBridge(bridge_name)
+        port = get_trunk_bridge_local_port(trunk_bridge)
         parent_port_id = (
             self.trunk_manager.get_port_uuid_from_external_ids(port))
         trunk_id = port['external_ids']['trunk_id']
